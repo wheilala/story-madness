@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Madlib POC Harness</title>
+  <style>
+    :root {
+      --bg-a: #fef6e4;
+      --bg-b: #d9f0ff;
+      --ink: #1f2937;
+      --card: #ffffffcc;
+      --accent: #ef476f;
+      --accent-2: #06d6a0;
+      --accent-3: #118ab2;
+      --warning: #b91c1c;
+      --ok: #0f766e;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 20%, #fff4b8 0%, #fff4b800 30%),
+        radial-gradient(circle at 85% 15%, #ffd6e8 0%, #ffd6e800 35%),
+        linear-gradient(140deg, var(--bg-a), var(--bg-b));
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 2px solid #ffffff;
+      backdrop-filter: blur(3px);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 10px 24px #00000014;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(1.5rem, 2.2vw, 2rem);
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 1.1rem;
+    }
+
+    p {
+      margin: 0 0 10px;
+      line-height: 1.4;
+    }
+
+    textarea, input[type="text"] {
+      width: 100%;
+      border: 2px solid #d1d5db;
+      border-radius: 10px;
+      padding: 10px;
+      font: inherit;
+      background: #fff;
+    }
+
+    textarea { min-height: 120px; resize: vertical; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+
+    .field {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 8px;
+    }
+
+    .field label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 6px;
+      font-size: 0.92rem;
+    }
+
+    .btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+      font-weight: 700;
+      transition: transform 120ms ease;
+    }
+
+    button:hover { transform: translateY(-1px); }
+
+    .primary { background: var(--accent); color: #fff; }
+    .secondary { background: var(--accent-3); color: #fff; }
+    .success { background: var(--accent-2); color: #082f49; }
+
+    .status {
+      border-radius: 10px;
+      padding: 10px;
+      font-weight: 700;
+      background: #f8fafc;
+    }
+
+    .status.ok { color: var(--ok); border: 2px solid #99f6e4; }
+    .status.warn { color: var(--warning); border: 2px solid #fecaca; }
+    .status.info { color: #1d4ed8; border: 2px solid #bfdbfe; }
+
+    .story {
+      white-space: pre-wrap;
+      line-height: 1.65;
+      background: #fff;
+      border: 1px dashed #cbd5e1;
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .filled {
+      display: inline-block;
+      background: #fef08a;
+      border-radius: 4px;
+      padding: 0 4px;
+      font-weight: 700;
+    }
+
+    .hint { font-size: 0.92rem; color: #475569; }
+    .err { color: var(--warning); font-size: 0.85rem; margin-top: 6px; display: none; }
+    .field.bad input { border-color: #ef4444; background: #fef2f2; }
+
+    @media print {
+      body { background: #fff; padding: 0; }
+      .no-print { display: none !important; }
+      .card {
+        border: 0;
+        box-shadow: none;
+        background: #fff;
+        padding: 0;
+      }
+      .story { border: 0; padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="card no-print">
+      <h1>Madlib POC Harness</h1>
+      <p>Fast local demo for your 3 POCs: story blanks, illustration prompt, and safety checks.</p>
+    </section>
+
+    <section class="card no-print">
+      <h2>1) Seed Input</h2>
+      <textarea id="seedInput">John trips over a twig and gets very angry and then he decides to become a firefighter to make sure this never happens to other people again.</textarea>
+    </section>
+
+    <section class="card no-print">
+      <h2>2) Story Template (use [TOKENS] for blanks)</h2>
+      <textarea id="templateInput">One [ADJ_1] afternoon, John was [VERB_ING_1] down [PLACE_1] when his shoe caught on a tiny [NOUN_1].
+He flew forward, windmilled his arms, and landed in a pile of [PLURAL_NOUN_1].
+"[EXCLAMATION_1]!" he shouted, jumping up with a face as [ADJ_2] as a [NOUN_2].
+
+For exactly [NUMBER_1] dramatic minutes, John made a speech to a confused [ANIMAL_1] and a nearby [PERSON_TYPE_1].
+"No one else should suffer from surprise twigs!" he declared.
+He stomped home, drew up a plan with [NUMBER_2] bullet points, and circled one giant dream: become a firefighter.
+
+The next morning he arrived at the fire station carrying a [NOUN_3], a water bottle, and unstoppable [NOUN_4].
+Captain [NAME_1] raised an eyebrow and said, "Can you lift that [ADJ_3] hose?"
+John nodded [ADVERB_1], grabbed it, and [VERB_PAST_1] across the yard like a hero in training.
+
+Soon he learned to climb ladders, tie [ADJ_4] knots, and rescue a [ANIMAL_2] toy from a [PLACE_2].
+When he spotted twigs on sidewalks, he would [VERB_1] them into neat piles and post signs that said, "Watch your [BODY_PART_1]!"
+Neighborhood kids cheered and handed him [PLURAL_NOUN_2] as thank-you gifts.
+
+By the end of the month, John had become the town's most [ADJ_5] safety champion.
+He still remembered The Twig Incident, but now he smiled and said,
+"Sometimes a tiny [NOUN_5] can spark a [NOUN_6] mission."</textarea>
+
+      <div class="btns">
+        <button class="primary" id="buildBtn">Build Blanks</button>
+        <button class="secondary" id="safetyBtn">Run Safety Check</button>
+      </div>
+      <p class="hint">Tip: This page does not call any API. It is a local POC harness for workflow validation.</p>
+    </section>
+
+    <section class="card no-print">
+      <h2>3) Fill In Words</h2>
+      <div id="fields" class="grid"></div>
+      <div class="btns">
+        <button class="success" id="revealBtn">Reveal Story</button>
+        <button class="secondary" id="printBlankBtn">Print Blank Worksheet</button>
+        <button class="secondary" id="printRevealBtn">Print Revealed Story</button>
+      </div>
+    </section>
+
+    <section class="card no-print">
+      <h2>4) Safety Report</h2>
+      <div id="safetyStatus" class="status">Not run yet.</div>
+    </section>
+
+    <section class="card">
+      <h2>5) Story Output</h2>
+      <div id="storyOut" class="story">Click "Build Blanks", fill words, then click "Reveal Story".</div>
+    </section>
+
+    <section class="card">
+      <h2>6) Image API Request Output</h2>
+      <p class="no-print hint">Choose style and copy this JSON into your image-generation API call.</p>
+      <div class="no-print btns">
+        <label for="imageStyle"><strong>Style:</strong></label>
+        <select id="imageStyle">
+          <option value="coloring">Coloring Page (default)</option>
+          <option value="storybook">Children's Book Illustration</option>
+        </select>
+        <button class="secondary" id="copyImageJsonBtn">Copy Image JSON</button>
+      </div>
+      <div id="imagePrompt" class="story"></div>
+    </section>
+  </div>
+
+  <script>
+    const templateInput = document.getElementById("templateInput");
+    const seedInput = document.getElementById("seedInput");
+    const fields = document.getElementById("fields");
+    const storyOut = document.getElementById("storyOut");
+    const safetyStatus = document.getElementById("safetyStatus");
+    const imagePrompt = document.getElementById("imagePrompt");
+    const imageStyle = document.getElementById("imageStyle");
+
+    const blockedPatterns = [
+      /\b(?:f+u+c+k+|s+h+i+t+|b+i+t+c+h+|a+s+s+h+o+l+e+|d+a+m+n+)\b/i,
+      /\b(?:kill|murder|rape|suicide|self-harm|porn|nude)\b/i
+    ];
+    const softReplace = [
+      { pattern: /\bobese\b/gi, replacement: "very chubby" }
+    ];
+
+    function parseTokens(text) {
+      const tokens = [...text.matchAll(/\[([A-Z0-9_]+)\]/g)].map((m) => m[1]);
+      return [...new Set(tokens)];
+    }
+
+    function labelForToken(token) {
+      return token.replaceAll("_", " ").toLowerCase();
+    }
+
+    function sanitizeSoft(text) {
+      let out = text;
+      for (const rule of softReplace) out = out.replace(rule.pattern, rule.replacement);
+      return out;
+    }
+
+    function isBlocked(text) {
+      return blockedPatterns.some((r) => r.test(text));
+    }
+
+    function buildFields() {
+      const tokens = parseTokens(templateInput.value);
+      fields.innerHTML = "";
+      if (!tokens.length) {
+        fields.innerHTML = "<p>No [TOKENS] found in template.</p>";
+        return;
+      }
+
+      for (const token of tokens) {
+        const box = document.createElement("div");
+        box.className = "field";
+        box.innerHTML = `
+          <label for="f_${token}">${token} (${labelForToken(token)})</label>
+          <input id="f_${token}" type="text" placeholder="Enter ${labelForToken(token)}" />
+          <div class="err">Please choose a different word (family-safe words only).</div>
+        `;
+        fields.appendChild(box);
+      }
+      storyOut.textContent = templateInput.value;
+      updateImagePrompt();
+    }
+
+    function validateFieldInputs() {
+      let allClear = true;
+      for (const field of [...fields.querySelectorAll(".field")]) {
+        const input = field.querySelector("input");
+        const err = field.querySelector(".err");
+        const value = (input?.value || "").trim();
+        const bad = value.length > 0 && isBlocked(value);
+        field.classList.toggle("bad", bad);
+        if (err) err.style.display = bad ? "block" : "none";
+        if (bad) allClear = false;
+      }
+      return allClear;
+    }
+
+    function runSafetyCheck() {
+      seedInput.value = sanitizeSoft(seedInput.value);
+      const seed = seedInput.value.trim();
+      const template = templateInput.value;
+      const inputs = [...fields.querySelectorAll("input")].map((el) => el.value).join(" ");
+      const seedOrTemplateBlocked = isBlocked(seed) || isBlocked(template);
+      const inputBlocked = !validateFieldInputs();
+
+      if (seedOrTemplateBlocked || inputBlocked) {
+        safetyStatus.className = "status warn";
+        safetyStatus.textContent = "BLOCK: Unsafe wording detected. Update the seed or fill-in words and try again.";
+        return false;
+      }
+
+      safetyStatus.className = "status ok";
+      safetyStatus.textContent = "PASS: Seed and fill-in words look family-friendly.";
+      return true;
+    }
+
+    function revealStory() {
+      const ok = runSafetyCheck();
+      if (!ok) return;
+
+      let out = templateInput.value;
+      const tokens = parseTokens(out);
+      for (const token of tokens) {
+        const v = document.getElementById(`f_${token}`)?.value?.trim() || `(${labelForToken(token)})`;
+        const safe = v.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        out = out.replaceAll(`[${token}]`, `<span class="filled">${safe}</span>`);
+      }
+      storyOut.innerHTML = out;
+      updateImagePrompt();
+    }
+
+    function printBlank() {
+      storyOut.textContent = templateInput.value;
+      window.print();
+    }
+
+    function printReveal() {
+      revealStory();
+      if (safetyStatus.classList.contains("warn")) return;
+      window.print();
+    }
+
+    function updateImagePrompt() {
+      const seed = sanitizeSoft(seedInput.value.trim());
+      const style = imageStyle.value;
+      const styleInstruction = style === "coloring"
+        ? "Black-and-white coloring page line art, bold clean outlines, simple kid-friendly composition, minimal shading, no text, no logos."
+        : "Playful children's book illustration, colorful, expressive characters, family-friendly, no text, no logos.";
+
+      const apiPayload = {
+        model: "gpt-image-1",
+        size: "1024x1024",
+        prompt:
+          `Create a ${style === "coloring" ? "coloring page" : "children's illustration"} scene from this seed: "${seed}". ` +
+          `${styleInstruction} Keep it harmless, funny, and suitable for kids.`
+      };
+      imagePrompt.textContent = JSON.stringify(apiPayload, null, 2);
+    }
+
+    async function copyImageJson() {
+      try {
+        await navigator.clipboard.writeText(imagePrompt.textContent);
+        safetyStatus.className = "status info";
+        safetyStatus.textContent = "Image JSON copied. Paste it into your image API call.";
+      } catch {
+        safetyStatus.className = "status warn";
+        safetyStatus.textContent = "Could not copy automatically. Select and copy the JSON manually.";
+      }
+    }
+
+    document.getElementById("buildBtn").addEventListener("click", buildFields);
+    document.getElementById("safetyBtn").addEventListener("click", runSafetyCheck);
+    document.getElementById("revealBtn").addEventListener("click", revealStory);
+    document.getElementById("printBlankBtn").addEventListener("click", printBlank);
+    document.getElementById("printRevealBtn").addEventListener("click", printReveal);
+    document.getElementById("copyImageJsonBtn").addEventListener("click", copyImageJson);
+    imageStyle.addEventListener("change", updateImagePrompt);
+    fields.addEventListener("input", validateFieldInputs);
+
+    buildFields();
+    runSafetyCheck();
+  </script>
+</body>
+</html>
