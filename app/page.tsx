@@ -1,17 +1,33 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { BlankToken, ImageGenerateResponse, StoryGenerateResponse, StoryRevealResponse } from "@/lib/types";
 import { hasDeterministicBlock } from "@/lib/safety/word-filter";
 
 type UiStatus = { kind: "ok" | "warn" | "block"; text: string } | null;
 
-const defaultSeed =
-  "John trips over a twig and gets very angry and then he decides to become a firefighter to make sure this never happens to other people again.";
+const defaultSeed = "";
+const sampleSeeds = [
+  "A goalie slips on a wet soccer ball and starts a neighborhood safety club.",
+  "Maya drops her giant ice cream at the park and invents a super-cleanup team.",
+  "Two siblings crash their bike into a pile of leaves and decide to become crossing guards."
+];
+
+function createRunId(): string {
+  if (
+    typeof globalThis !== "undefined" &&
+    globalThis.crypto &&
+    typeof globalThis.crypto.randomUUID === "function"
+  ) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `run-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 export default function HomePage() {
-  const [runId] = useState<string>(() => crypto.randomUUID());
+  const [runId] = useState<string>(() => createRunId());
   const [seed, setSeed] = useState(defaultSeed);
+  const [generatedSeed, setGeneratedSeed] = useState<string>("");
   const [seedStatus, setSeedStatus] = useState<UiStatus>(null);
   const [loadingStory, setLoadingStory] = useState(false);
   const [story, setStory] = useState<StoryGenerateResponse | null>(null);
@@ -22,24 +38,79 @@ export default function HomePage() {
   const [loadingImage, setLoadingImage] = useState(false);
   const [image, setImage] = useState<ImageGenerateResponse | null>(null);
   const [rewriteSuggestion, setRewriteSuggestion] = useState<string | null>(null);
+  const storyIsStale = Boolean(story?.storyTemplate && generatedSeed.trim() !== seed.trim());
 
-  const activeStep = useMemo(() => {
-    if (image?.imageBase64 || image?.imageUrl) return 4;
-    if (reveal?.revealedStory) return 3;
-    if (story?.storyTemplate) return 2;
-    return 1;
-  }, [image, reveal, story]);
+  function prettyTokenLabel(tokenId: string): string {
+    if (!tokenId) return "Word";
+    const normalized = tokenId.replace(/_\d+$/, "");
+    const map: Record<string, string> = {
+      NOUN: "Noun",
+      PLURAL_NOUN: "Plural Noun",
+      ADJ: "Adjective",
+      ADJECTIVE: "Adjective",
+      ADVERB: "Adverb",
+      VERB: "Verb",
+      VERB_ING: "Verb ending in -ing",
+      VERB_PAST: "Past tense verb",
+      NUMBER: "Number",
+      NAME: "Name",
+      PLACE: "Place",
+      ANIMAL: "Animal",
+      BODY_PART: "Body part",
+      EXCLAMATION: "Exclamation",
+      SOUND: "Sound word"
+    };
+    if (map[normalized]) return map[normalized];
+    return normalized
+      .split("_")
+      .map((part) => part[0] + part.slice(1).toLowerCase())
+      .join(" ");
+  }
+
+  function resetGeneratedState() {
+    setStory(null);
+    setGeneratedSeed("");
+    setFills({});
+    setFieldErrors({});
+    setReveal(null);
+    setImage(null);
+    setRewriteSuggestion(null);
+  }
+
+  function onSeedChange(value: string) {
+    setSeed(value);
+    if (story?.storyTemplate && value.trim() !== generatedSeed.trim()) {
+      setSeedStatus({
+        kind: "warn",
+        text: "Seed changed. Click Generate Story to refresh everything."
+      });
+      setReveal(null);
+      setImage(null);
+    }
+  }
+
+  function chooseSampleSeed(value: string) {
+    setSeed(value);
+    setSeedStatus({
+      kind: "ok",
+      text: "Sample added. Click Generate Story when you're ready."
+    });
+    if (story?.storyTemplate && value.trim() !== generatedSeed.trim()) {
+      setReveal(null);
+      setImage(null);
+    }
+  }
 
   function updateField(id: string, value: string) {
     setFills((prev) => ({ ...prev, [id]: value }));
-    if (value.trim().length === 0) {
+    if (!value.trim()) {
       setFieldErrors((prev) => ({ ...prev, [id]: "" }));
       return;
     }
     if (hasDeterministicBlock(value)) {
       setFieldErrors((prev) => ({
         ...prev,
-        [id]: "Choose a different word (kid-safe words only)."
+        [id]: "Try a different word (kid-safe words only)."
       }));
     } else {
       setFieldErrors((prev) => ({ ...prev, [id]: "" }));
@@ -49,14 +120,14 @@ export default function HomePage() {
   async function onGenerateStory() {
     if (!seed.trim()) return;
     if (hasDeterministicBlock(seed)) {
-      setSeedStatus({ kind: "block", text: "Seed blocked by local safety filter." });
+      setSeedStatus({ kind: "block", text: "That seed is blocked by the safety filter." });
       return;
     }
 
     setLoadingStory(true);
     setSeedStatus(null);
-    setReveal(null);
-    setImage(null);
+    resetGeneratedState();
+
     try {
       const response = await fetch("/api/story/generate", {
         method: "POST",
@@ -73,26 +144,26 @@ export default function HomePage() {
       const storyResult = data as StoryGenerateResponse;
       if (storyResult.moderationDecision === "BLOCK") {
         setSeedStatus({ kind: "block", text: storyResult.moderationReason });
-        setStory(null);
         return;
       }
 
       if (storyResult.moderationDecision === "REWRITE") {
         setSeedStatus({
           kind: "warn",
-          text: "Seed was adjusted for safety. Review the rewrite before continuing."
+          text: "Seed was adjusted for safety. You can accept the rewrite below."
         });
         setRewriteSuggestion(storyResult.rewrittenSeed ?? null);
       } else {
-        setSeedStatus({ kind: "ok", text: "Seed passed moderation and story is ready." });
-        setRewriteSuggestion(null);
+        setSeedStatus({ kind: "ok", text: "Story generated. Fill in words to reveal it." });
       }
 
-      setStory(storyResult);
+      const safeBlanks = (storyResult.blanks ?? []).filter(
+        (blank): blank is BlankToken => Boolean(blank && typeof blank.id === "string" && blank.id.trim())
+      );
+      setStory({ ...storyResult, blanks: safeBlanks });
+      setGeneratedSeed(seed.trim());
       const nextFills: Record<string, string> = {};
-      for (const blank of storyResult.blanks) {
-        nextFills[blank.id] = "";
-      }
+      for (const blank of safeBlanks) nextFills[blank.id] = "";
       setFills(nextFills);
       setFieldErrors({});
     } finally {
@@ -102,19 +173,18 @@ export default function HomePage() {
 
   async function onRevealStory() {
     if (!story?.storyTemplate) return;
-    const hasLocalError = Object.values(fieldErrors).some(Boolean);
-    if (hasLocalError) return;
+    if (storyIsStale) {
+      setSeedStatus({ kind: "warn", text: "Generate story again to match your latest seed." });
+      return;
+    }
+    if (Object.values(fieldErrors).some(Boolean)) return;
 
     setLoadingReveal(true);
     try {
       const response = await fetch("/api/story/reveal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          runId,
-          storyTemplate: story.storyTemplate,
-          fills
-        })
+        body: JSON.stringify({ runId, storyTemplate: story.storyTemplate, fills })
       });
       const data = (await response.json()) as StoryRevealResponse;
       setReveal(data);
@@ -125,16 +195,17 @@ export default function HomePage() {
 
   async function onGenerateImage() {
     if (!story?.storyTemplate) return;
+    if (storyIsStale) {
+      setSeedStatus({ kind: "warn", text: "Generate story again before creating the coloring page." });
+      return;
+    }
+
     setLoadingImage(true);
     try {
       const response = await fetch("/api/image/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          runId,
-          seed,
-          storyTemplate: story.storyTemplate
-        })
+        body: JSON.stringify({ runId, seed, storyTemplate: story.storyTemplate })
       });
       const data = (await response.json()) as ImageGenerateResponse;
       setImage(data);
@@ -143,60 +214,60 @@ export default function HomePage() {
     }
   }
 
-  function printableStory() {
-    if (reveal?.revealedStory) return reveal.revealedStory;
-    return story?.storyTemplate ?? "";
-  }
-
   function applyRewriteSuggestion() {
     if (!rewriteSuggestion) return;
     setSeed(rewriteSuggestion);
     setRewriteSuggestion(null);
-    setSeedStatus({ kind: "ok", text: "Rewrite accepted. Generate story again." });
+    setSeedStatus({ kind: "ok", text: "Rewrite accepted. Click Generate Story." });
   }
 
   return (
     <main>
-      <div className="panel noPrint">
-        <h1>MadlibInc</h1>
-        <p>Kid-safe story + coloring page flow with strict moderation.</p>
-        <div className="progress">
-          <span className={`chip ${activeStep >= 1 ? "active" : ""}`}>1. Seed</span>
-          <span className={`chip ${activeStep >= 2 ? "active" : ""}`}>2. Fill</span>
-          <span className={`chip ${activeStep >= 3 ? "active" : ""}`}>3. Reveal/Print</span>
-          <span className={`chip ${activeStep >= 4 ? "active" : ""}`}>4. Coloring Page</span>
+      <section className="hero">
+        <div className="titleCard">
+          <h1>Story Madness</h1>
+          <p className="subtitle">Type a goofy seed, fill the blanks, reveal a wild story, then generate a coloring page.</p>
         </div>
-      </div>
+        <div className="mascotCard">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="mascotImg" src="/graphics/razzle.jpeg" alt="Razzle the Story Monster" />
+        </div>
+      </section>
 
       <section className="panel">
-        <h2>Step 1: Seed Input</h2>
+        <h2>What will your story be about?  Start with a "seed"!</h2>
+        <p className="tiny">Kid-safe seeds work best. Keep it funny and adventurous.</p>
         <textarea
           value={seed}
-          onChange={(e) => setSeed(e.target.value)}
-          placeholder="Enter your story seed..."
+          onChange={(e) => onSeedChange(e.target.value)}
+          placeholder="Example: A goalie slips on the ball and starts a safety club."
         />
-        <div className="btnRow noPrint">
+        <div className="seedSamples">
+          {sampleSeeds.map((sample) => (
+            <button key={sample} className="sampleBtn" onClick={() => chooseSampleSeed(sample)}>
+              Use Sample
+            </button>
+          ))}
+        </div>
+        <div className="btnRow">
           <button onClick={onGenerateStory} disabled={loadingStory || !seed.trim()}>
-            {loadingStory ? "Generating..." : "Generate Story"}
+            {loadingStory ? "Creating Story..." : "Generate Story"}
           </button>
           <button
-            className="secondary"
+            className="ghost"
             onClick={() => {
               setSeed(defaultSeed);
-              setStory(null);
-              setReveal(null);
-              setImage(null);
               setSeedStatus(null);
-              setRewriteSuggestion(null);
+              resetGeneratedState();
             }}
           >
-            Reset
+            Clear
           </button>
         </div>
         {seedStatus && <div className={`status ${seedStatus.kind}`}>{seedStatus.text}</div>}
         {rewriteSuggestion && (
-          <div className="status warn noPrint">
-            <div>Suggested safer rewrite:</div>
+          <div className="status warn">
+            <div>Suggested safe rewrite:</div>
             <pre className="storyOut">{rewriteSuggestion}</pre>
             <div className="btnRow">
               <button onClick={applyRewriteSuggestion}>Use Rewrite</button>
@@ -207,18 +278,14 @@ export default function HomePage() {
 
       {story?.storyTemplate && (
         <section className="panel">
-          <h2>Step 2: Fill In The Blanks</h2>
-          <p>
-            <strong>{story.title}</strong>
-          </p>
+          <h2>Fill In Your Words</h2>
+          <p className="ctaHint">Story title: {story.title}</p>
           <div className="fieldsGrid noPrint">
-            {story.blanks.map((blank: BlankToken) => {
+            {(story.blanks ?? []).map((blank: BlankToken) => {
               const err = fieldErrors[blank.id];
               return (
                 <div className={`field ${err ? "bad" : ""}`} key={blank.id}>
-                  <label htmlFor={blank.id}>
-                    {blank.id} ({blank.label})
-                  </label>
+                  <label htmlFor={blank.id}>{prettyTokenLabel(blank.id)}</label>
                   <input
                     id={blank.id}
                     type="text"
@@ -231,7 +298,7 @@ export default function HomePage() {
             })}
           </div>
           <div className="btnRow noPrint">
-            <button onClick={onRevealStory} disabled={loadingReveal}>
+            <button onClick={onRevealStory} disabled={loadingReveal || storyIsStale}>
               {loadingReveal ? "Checking..." : "Reveal Story"}
             </button>
             <button className="secondary" onClick={() => window.print()}>
@@ -239,24 +306,30 @@ export default function HomePage() {
             </button>
           </div>
           {!reveal?.revealedStory && (
-            <div className="storyOut">{story.storyTemplate}</div>
+            <div className="hiddenStoryNote noPrint">
+              Story stays hidden until you click <strong>Reveal Story</strong>.
+            </div>
           )}
+          <div className="printOnly">
+            <h3>{story.title}</h3>
+            <div className="storyOut">{story.storyTemplate}</div>
+          </div>
         </section>
       )}
 
       {reveal && (
         <section className="panel">
-          <h2>Step 3: Revealed Story</h2>
+          <h2>Your Story Reveal</h2>
           {reveal.moderationDecision === "BLOCK" ? (
             <div className="status block">{reveal.moderationReason}</div>
           ) : (
             <>
-              <div className="storyOut">{printableStory()}</div>
+              <div className="storyOut">{reveal.revealedStory}</div>
               <div className="btnRow noPrint">
                 <button className="secondary" onClick={() => window.print()}>
-                  Print Revealed Story
+                  Print Story
                 </button>
-                <button onClick={onGenerateImage} disabled={loadingImage}>
+                <button onClick={onGenerateImage} disabled={loadingImage || storyIsStale}>
                   {loadingImage ? "Generating..." : "Generate Coloring Page"}
                 </button>
               </div>
@@ -267,7 +340,7 @@ export default function HomePage() {
 
       {image && (
         <section className="panel">
-          <h2>Step 4: Coloring Page</h2>
+          <h2>Coloring Page</h2>
           {image.moderationDecision === "BLOCK" ? (
             <div className="status block">{image.moderationReason}</div>
           ) : (
@@ -284,7 +357,7 @@ export default function HomePage() {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img alt="Generated coloring page" className="imgBox" src={image.imageUrl} />
               )}
-              <p>Prompt policy: black-and-white line art only.</p>
+              <p className="tiny">Line-art only, kid-friendly, no text/logos.</p>
               <div className="btnRow noPrint">
                 <button className="secondary" onClick={() => window.print()}>
                   Print Story + Coloring Page
