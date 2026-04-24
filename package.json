@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run"
+    "test": "vitest run",
+    "local:refresh": "powershell -ExecutionPolicy Bypass -File .\\scripts\\local-refresh.ps1 -Port 3001",
+    "local:stop": "powershell -ExecutionPolicy Bypass -File .\\scripts\\local-stop.ps1 -Port 3001"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.8",

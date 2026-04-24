@@ -24,6 +24,24 @@ Next.js full-stack app for kid-safe madlib generation, fill/reveal, printing, an
 5. Run tests:
    - `npm test`
 
+## One-Command Reliable Local Restart
+
+If local server state gets stale, run:
+
+- `npm run local:refresh`
+
+This command will:
+
+1. Stop any server process using port 3001
+2. Delete `.next`
+3. Rebuild the app
+4. Start production server on `http://localhost:3001`
+5. Verify page + CSS health before returning
+
+Stop server later with:
+
+- `npm run local:stop`
+
 ## Required APIs
 
 - OpenAI:
