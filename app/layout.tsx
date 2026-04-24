@@ -15,7 +15,7 @@ const bodyFont = Plus_Jakarta_Sans({
 
 export const metadata: Metadata = {
   title: "Razzle's Story Lab",
-  description: "Kid-safe madlib story and coloring page generator"
+  description: "Kid-safe silly story creator and coloring page generator"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

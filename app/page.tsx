@@ -1,7 +1,12 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { BlankToken, ImageGenerateResponse, StoryGenerateResponse, StoryRevealResponse } from "@/lib/types";
+import {
+  BlankToken,
+  ImageGenerateResponse,
+  StoryGenerateResponse,
+  StoryRevealResponse
+} from "@/lib/types";
 import { hasDeterministicBlock } from "@/lib/safety/word-filter";
 import { buildStoryParts } from "@/lib/story-format";
 import { humanLabel } from "@/lib/madlib-labels";
@@ -157,6 +162,10 @@ export default function HomePage() {
     if (!SHOW_GENERATION_TEST_MODE || !story?.diagnostics) return null;
 
     const diagnostics = story.diagnostics;
+    if (diagnostics.finalOutcome === "accepted" && !diagnostics.retryUsed && !diagnostics.fallbackUsed) {
+      return null;
+    }
+
     return (
       <div className="status warn qualityBanner generationDebug noPrint">
         <strong>Test mode: generation diagnostics</strong>
@@ -331,6 +340,7 @@ export default function HomePage() {
       });
       const data = (await response.json()) as StoryRevealResponse;
       setReveal(data);
+
       setActiveStep("reveal");
     } finally {
       setLoadingStage(null);
@@ -424,7 +434,7 @@ export default function HomePage() {
               <p className="heroBrand">Razzle&apos;s Story Lab</p>
               <h1>Start with one goofy spark.</h1>
               <p className="subtitle">
-                Drop in a seed and Razzle turns it into a kid-safe Mad Lib adventure ready to fill,
+                Drop in a seed and Razzle turns it into a kid-safe silly story creator ready to fill,
                 reveal, and print.
               </p>
             </div>
@@ -550,7 +560,6 @@ export default function HomePage() {
             </div>
           )}
           {renderGenerationDiagnostics()}
-
           <div className="fieldsGrid noPrint">
             {(story.blanks ?? []).map((blank: BlankToken, idx: number) => {
               const err = fieldErrors[blank.id];

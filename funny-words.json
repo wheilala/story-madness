@@ -1,0 +1,77 @@
+{
+  "version": "1.1",
+  "description": "Kid-friendly funny word catalog with structured verb forms for Story Madness",
+  "fallbackCategory": "else",
+  "categories": {
+    "noun": [
+      "pickle", "banana", "marshmallow", "spaghetti", "hamster",
+      "llama", "pancake", "waffle", "donut", "sock",
+      "toothbrush", "rubber duck", "balloon", "pirate", "robot",
+      "alien", "monster", "turtle", "cheeseburger", "cookie"
+    ],
+    "plural_noun": [
+      "pickles", "bananas", "marshmallows", "spaghetti noodles", "hamsters",
+      "llamas", "pancakes", "waffles", "donuts", "socks",
+      "toothbrushes", "rubber ducks", "balloons", "pirates", "robots",
+      "aliens", "monsters", "turtles", "cheeseburgers", "cookies"
+    ],
+    "adjective": [
+      "goofy", "silly", "wacky", "zany", "gigantic",
+      "tiny", "squishy", "fluffy", "fuzzy", "slimy",
+      "sticky", "stinky", "sparkly", "bumpy", "lumpy",
+      "grumpy", "sleepy", "confused", "wobbly", "magical"
+    ],
+    "adverb": [
+      "quickly", "slowly", "awkwardly", "loudly", "quietly",
+      "happily", "grumpily", "excitedly", "wildly", "carefully",
+      "sneakily", "bravely", "suddenly", "dramatically", "goofily",
+      "clumsily", "proudly", "shakily", "playfully", "mysteriously"
+    ],
+    "proper_noun": [
+      "Captain Pickle", "Sir Wiggles", "Princess Pancake", "Doctor Banana", "Ninja Noodle",
+      "Professor Pudding", "King Jellybean", "Queen Marshmallow", "Agent Waffles", "Detective Donut",
+      "Bobby McToot", "Sally Sparkles", "Gary Giggles", "Zippy the Zebra", "Molly Muffin",
+      "Wally Wobble", "Polly Pickles", "Ricky Rocket", "Daisy Doodle", "Gizmo the Great"
+    ],
+    "sound_word": [
+      "boing", "bonk", "splat", "whoosh", "zoom",
+      "zap", "pow", "bam", "clang", "clunk",
+      "thud", "plop", "pop", "bloop", "slurp",
+      "snort", "burp", "ding", "boop", "kaboom"
+    ],
+    "object": [
+      "toothbrush", "rubber duck", "banana peel", "whoopee cushion", "backpack",
+      "lunchbox", "soccer ball", "helmet", "pillow", "remote control",
+      "skateboard", "watering can", "flashlight", "megaphone", "bucket",
+      "pizza box", "cookie jar", "frying pan", "spatula", "crayon"
+    ],
+    "verb": [
+      { "base": "wiggle", "past": "wiggled", "ing": "wiggling" },
+      { "base": "wobble", "past": "wobbled", "ing": "wobbling" },
+      { "base": "zoom", "past": "zoomed", "ing": "zooming" },
+      { "base": "splat", "past": "splatted", "ing": "splatting" },
+      { "base": "bonk", "past": "bonked", "ing": "bonking" },
+      { "base": "boing", "past": "boinged", "ing": "boinging" },
+      { "base": "squish", "past": "squished", "ing": "squishing" },
+      { "base": "slurp", "past": "slurped", "ing": "slurping" },
+      { "base": "gulp", "past": "gulped", "ing": "gulping" },
+      { "base": "chomp", "past": "chomped", "ing": "chomping" },
+      { "base": "skip", "past": "skipped", "ing": "skipping" },
+      { "base": "hop", "past": "hopped", "ing": "hopping" },
+      { "base": "twirl", "past": "twirled", "ing": "twirling" },
+      { "base": "spin", "past": "spun", "ing": "spinning" },
+      { "base": "tumble", "past": "tumbled", "ing": "tumbling" },
+      { "base": "tickle", "past": "tickled", "ing": "tickling" },
+      { "base": "giggle", "past": "giggled", "ing": "giggling" },
+      { "base": "snort", "past": "snorted", "ing": "snorting" },
+      { "base": "sneeze", "past": "sneezed", "ing": "sneezing" },
+      { "base": "bounce", "past": "bounced", "ing": "bouncing" }
+    ],
+    "else": [
+      "thingy", "stuff", "something", "whatever", "whatchamacallit",
+      "doohickey", "gizmo", "thingamabob", "blah", "yada yada",
+      "oops", "uh-oh", "hmm", "huh", "okay",
+      "sure", "why not", "maybe", "who knows", "ta-da"
+    ]
+  }
+}

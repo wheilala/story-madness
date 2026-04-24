@@ -12,7 +12,12 @@ import {
   parseTokenOccurrences,
   parseTokens as parseTemplateTokens
 } from "@/lib/story-format";
-import { extractBlankedStory, hasEnoughBlankCandidates } from "@/lib/story-candidates";
+import {
+  buildHumorShadowStory,
+  extractBlankedStory,
+  hasEnoughBlankCandidates
+} from "@/lib/story-candidates";
+import { recommendFunnyBlankSpans } from "@/lib/story-humor-selector";
 import { readDoc, wink } from "@/lib/wink";
 import {
   BlankToken,
@@ -61,6 +66,7 @@ type RepairStats = {
   candidateCount: number;
   chosenCount: number;
   slotRepairCount: number;
+  selector: "local" | "humor_shadow";
 };
 
 const TARGET_BLANK_COUNT = 12;
@@ -194,7 +200,7 @@ function buildFallbackStory(seed: string): StoryTemplatePayload {
 
 function createStoryPrompt(seed: string): string {
   return [
-    "Create a family-safe madlib story JSON using this seed:",
+    "Create a family-safe silly story JSON using this seed:",
     seed,
     "",
     "Requirements:",
@@ -288,17 +294,57 @@ function extractSeedKeywords(seed: string): string[] {
   return keywords.slice(0, 8);
 }
 
-function extractOrRepairBlanks(seed: string, scaffold: AuthoredStoryScaffold): { story: StoryTemplatePayload; repairStats: RepairStats } {
+async function extractOrRepairBlanks(
+  seed: string,
+  scaffold: AuthoredStoryScaffold
+): Promise<{ story: StoryTemplatePayload; repairStats: RepairStats; selectorDurationMs: number }> {
+  const selectorStartedAt = now();
   const extracted = extractBlankedStory(seed, scaffold.title, scaffold.storyBody);
-  const slotRepaired = reconcileBlankTypesWithSlots(extracted.story);
+  const localSlotRepaired = reconcileBlankTypesWithSlots(extracted.story);
+
+  let selectedStory = localSlotRepaired.story;
+  let repairStats: RepairStats = {
+    candidateCount: extracted.candidateCount,
+    chosenCount: extracted.chosenCount,
+    slotRepairCount: localSlotRepaired.slotRepairCount,
+    selector: "local"
+  };
+
+  const recommendations = await recommendFunnyBlankSpans({
+    seed,
+    title: scaffold.title,
+    storyBody: scaffold.storyBody
+  });
+
+  if (recommendations.recommendations.length) {
+    const humorSelected = buildHumorShadowStory(
+      seed,
+      scaffold.title,
+      scaffold.storyBody,
+      recommendations.recommendations
+    );
+    const humorSlotRepaired = reconcileBlankTypesWithSlots(humorSelected.story);
+    const humorResult = {
+      story: humorSlotRepaired.story,
+      candidateCount: humorSelected.candidateCount,
+      chosenCount: humorSelected.chosenCount
+    };
+
+    if (hasEnoughBlankCandidates(humorResult)) {
+      selectedStory = humorResult.story;
+      repairStats = {
+        candidateCount: humorSelected.candidateCount,
+        chosenCount: humorSelected.chosenCount,
+        slotRepairCount: humorSlotRepaired.slotRepairCount,
+        selector: "humor_shadow"
+      };
+    }
+  }
 
   return {
-    story: slotRepaired.story,
-    repairStats: {
-      candidateCount: extracted.candidateCount,
-      chosenCount: extracted.chosenCount,
-      slotRepairCount: slotRepaired.slotRepairCount
-    }
+    story: selectedStory,
+    repairStats,
+    selectorDurationMs: now() - selectorStartedAt
   };
 }
 
@@ -759,8 +805,9 @@ export async function generateStory(seed: string): Promise<GenerateStoryResult> 
 
   if (firstAttempt.scaffold) {
     const normalizeStart = now();
-    const repaired = extractOrRepairBlanks(seed, firstAttempt.scaffold);
+    const repaired = await extractOrRepairBlanks(seed, firstAttempt.scaffold);
     timings.push({ stage: "normalize_initial", durationMs: now() - normalizeStart });
+    timings.push({ stage: "selector_initial", durationMs: repaired.selectorDurationMs });
     const validation = validateStoryDraft(seed, repaired.story, repaired.repairStats);
     if (validation.decision !== "retry") {
       attempts.push({
@@ -823,8 +870,9 @@ export async function generateStory(seed: string): Promise<GenerateStoryResult> 
 
   if (retryAttempt.scaffold) {
     const normalizeStart = now();
-    const repaired = extractOrRepairBlanks(seed, retryAttempt.scaffold);
+    const repaired = await extractOrRepairBlanks(seed, retryAttempt.scaffold);
     timings.push({ stage: "normalize_retry", durationMs: now() - normalizeStart });
+    timings.push({ stage: "selector_retry", durationMs: repaired.selectorDurationMs });
     const validation = validateStoryDraft(seed, repaired.story, repaired.repairStats);
     if (validation.decision !== "retry") {
       attempts.push({

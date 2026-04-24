@@ -92,3 +92,90 @@ export type ImageGenerateResponse = {
   moderationDecision: SafetyDecision;
   moderationReason: string;
 };
+
+export type RevealEvaluationDeterministicReport = {
+  unresolvedTokenCount: number;
+  articleMismatchCount: number;
+  objectBlankShare: number;
+  genericNounShare: number;
+  nounFamilyShare: number;
+  repeatedFillCount: number;
+  suspiciousLabels: string[];
+  warnings: string[];
+  overallScore: number;
+};
+
+export type RevealEvaluationModelReport = {
+  coherenceScore: number;
+  humorFitScore: number;
+  naturalnessScore: number;
+  semanticDriftScore: number;
+  pass: boolean;
+  confidence: number;
+  summary: string;
+  flaggedSubstitutions: string[];
+};
+
+export type RevealEvaluationReport = {
+  seed: string;
+  title: string;
+  fills: Record<string, string>;
+  deterministic: RevealEvaluationDeterministicReport;
+  model?: RevealEvaluationModelReport;
+  modelError?: string;
+};
+
+export type RevealEvaluationRunResponse = {
+  seed: string;
+  title: string;
+  storyTemplate: string;
+  blanks: BlankToken[];
+  fills: Record<string, string>;
+  revealedStory: string;
+  generationFallbackUsed: boolean;
+  generationRetryUsed: boolean;
+  evaluation: RevealEvaluationReport;
+};
+
+export type SelectorKind = "local" | "humor_shadow";
+
+export type SelectorShadowDiagnostics = {
+  selector: SelectorKind;
+  recommendedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  backfilledCount: number;
+  acceptedTexts: string[];
+  rejections: Array<{
+    text: string;
+    reason: string;
+  }>;
+  recommendationError?: string;
+};
+
+export type SelectorComparisonEntry = {
+  selector: SelectorKind;
+  storyTemplate: string;
+  blanks: BlankToken[];
+  fills: Record<string, string>;
+  revealedStory: string;
+  evaluation: RevealEvaluationReport;
+  diagnostics?: SelectorShadowDiagnostics;
+};
+
+export type SelectorComparisonSummary = {
+  winner: SelectorKind | "tie" | "skipped";
+  reason: string;
+  comparedOn: string[];
+};
+
+export type SelectorComparisonRunResponse = {
+  seed: string;
+  title: string;
+  storyBody: string;
+  generationFallbackUsed: boolean;
+  generationRetryUsed: boolean;
+  local: SelectorComparisonEntry;
+  humorShadow?: SelectorComparisonEntry;
+  comparison: SelectorComparisonSummary;
+};

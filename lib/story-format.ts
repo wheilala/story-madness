@@ -62,6 +62,49 @@ function normalizeFillForContext(raw: string, capitalize: boolean): string {
   return value;
 }
 
+function startsWithVowelSound(word: string): boolean {
+  const lowered = word.toLowerCase();
+  if (!lowered) return false;
+  if (/^(honest|honor|honour|hour|heir)/.test(lowered)) return true;
+  if (/^(uni([^nmd]|$)|use|user|euro|one|once|ubiq|ufo)/.test(lowered)) return false;
+  return /^[aeiou]/.test(lowered);
+}
+
+function normalizeIndefiniteArticles(text: string): string {
+  return text.replace(/\b([Aa]|[Aa]n)(\s+)(["'(\[]?)([A-Za-z][A-Za-z'-]*)/g, (_match, article: string, spacing: string, prefix: string, word: string) => {
+    const desired = startsWithVowelSound(word) ? "an" : "a";
+    const nextArticle = article[0] === article[0].toUpperCase()
+      ? desired.charAt(0).toUpperCase() + desired.slice(1)
+      : desired;
+    return `${nextArticle}${spacing}${prefix}${word}`;
+  });
+}
+
+function normalizeIndefiniteArticlesInParts(parts: StoryPart[]): StoryPart[] {
+  const normalized = parts.map((part) => ({ ...part }));
+
+  for (let index = 1; index < normalized.length; index += 1) {
+    const current = normalized[index];
+    const previous = normalized[index - 1];
+    if (!previous) continue;
+
+    const currentWordMatch = current.text.match(/^(\s*)(["'(\[]?)([A-Za-z][A-Za-z'-]*)/);
+    if (!currentWordMatch) continue;
+
+    previous.text = previous.text.replace(/\b([Aa]|[Aa]n)(\s+)$/, (_match, article: string, spacing: string) => {
+      const word = currentWordMatch[3];
+      const desired = startsWithVowelSound(word) ? "an" : "a";
+      const nextArticle =
+        article[0] === article[0].toUpperCase()
+          ? desired.charAt(0).toUpperCase() + desired.slice(1)
+          : desired;
+      return `${nextArticle}${spacing}`;
+    });
+  }
+
+  return normalized;
+}
+
 export function buildStoryParts(storyTemplate: string, fills: Record<string, string>): StoryPart[] {
   const parts: StoryPart[] = [];
   let resultSoFar = "";
@@ -87,11 +130,12 @@ export function buildStoryParts(storyTemplate: string, fills: Record<string, str
 
   const tail = storyTemplate.slice(cursor);
   if (tail) parts.push({ isFill: false, text: tail });
-  return parts;
+  return normalizeIndefiniteArticlesInParts(parts);
 }
 
 export function fillStoryTemplate(storyTemplate: string, fills: Record<string, string>): string {
-  return buildStoryParts(storyTemplate, fills)
+  const filled = buildStoryParts(storyTemplate, fills)
     .map((part) => part.text)
     .join("");
+  return normalizeIndefiniteArticles(filled);
 }

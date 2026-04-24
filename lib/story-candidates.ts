@@ -12,6 +12,8 @@ type TokenInfo = {
   end: number;
 };
 
+type CandidateSource = "token" | "phrase" | "model";
+
 type Candidate = {
   start: number;
   end: number;
@@ -19,7 +21,43 @@ type Candidate = {
   normalized: string;
   type: PromptTypeKey;
   score: number;
-  source: "token" | "phrase";
+  source: CandidateSource;
+};
+
+export type HumorSpanRecommendation = {
+  text: string;
+  reason?: string;
+};
+
+export type HumorSpanRejectionReason =
+  | "duplicate_text"
+  | "no_match"
+  | "ambiguous_match"
+  | "partial_token"
+  | "untyped"
+  | "slot_incompatible"
+  | "structural_risk"
+  | "overlap"
+  | "normalized_duplicate"
+  | "type_cap_exceeded";
+
+export type HumorSpanSelectionRejection = {
+  text: string;
+  reason: HumorSpanRejectionReason;
+};
+
+export type HumorSpanSelectionReport = {
+  recommendedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  backfilledCount: number;
+  acceptedTexts: string[];
+  rejections: HumorSpanSelectionRejection[];
+};
+
+const MAX_TYPE_COUNTS: Partial<Record<PromptTypeKey, number>> = {
+  Noun: 6,
+  Object: 3
 };
 
 const TARGET_BLANK_COUNT = 12;
@@ -64,6 +102,172 @@ const OBJECT_HEADS = new Set([
   "towel",
   "basket",
   "ring"
+]);
+
+const PERSON_HEADS = new Set([
+  "adult",
+  "baby",
+  "captain",
+  "cashier",
+  "child",
+  "coach",
+  "crossing",
+  "crowd",
+  "customer",
+  "driver",
+  "employee",
+  "friend",
+  "girl",
+  "grandma",
+  "grandpa",
+  "guard",
+  "helper",
+  "kid",
+  "librarian",
+  "mail",
+  "man",
+  "mom",
+  "mother",
+  "neighbor",
+  "parent",
+  "passerby",
+  "person",
+  "principal",
+  "reader",
+  "shopper",
+  "staff",
+  "teacher",
+  "toddler",
+  "woman",
+  "boy"
+]);
+
+const ANIMAL_HEADS = new Set([
+  "beetle",
+  "bird",
+  "bug",
+  "cat",
+  "chicken",
+  "dog",
+  "duck",
+  "elephant",
+  "frog",
+  "hamster",
+  "hornet",
+  "kitten",
+  "llama",
+  "monkey",
+  "puppy",
+  "seahorse",
+  "turtle",
+  "zebra"
+]);
+
+const FOOD_HEADS = new Set([
+  "brownie",
+  "burger",
+  "cake",
+  "candy",
+  "cheeseburger",
+  "chip",
+  "cookie",
+  "cupcake",
+  "donut",
+  "hotdog",
+  "ice",
+  "juice",
+  "marshmallow",
+  "meatball",
+  "milkshake",
+  "muffin",
+  "noodle",
+  "pancake",
+  "pizza",
+  "popcorn",
+  "pretzel",
+  "pudding",
+  "sandwich",
+  "sherbet",
+  "snack",
+  "soda",
+  "spaghetti",
+  "spring",
+  "syrup",
+  "taco",
+  "waffle"
+]);
+
+const BODY_PART_HEADS = new Set([
+  "ankle",
+  "arm",
+  "back",
+  "belly",
+  "cheek",
+  "chin",
+  "ear",
+  "earlobe",
+  "elbow",
+  "eyebrow",
+  "eye",
+  "face",
+  "finger",
+  "foot",
+  "hair",
+  "hand",
+  "head",
+  "heel",
+  "hip",
+  "knee",
+  "kneecap",
+  "leg",
+  "mouth",
+  "neck",
+  "nose",
+  "shoulder",
+  "toe"
+]);
+
+const CLOTHING_HEADS = new Set([
+  "apron",
+  "bandana",
+  "boot",
+  "cape",
+  "coat",
+  "costume",
+  "dress",
+  "glove",
+  "goggles",
+  "hat",
+  "helmet",
+  "hoodie",
+  "jacket",
+  "jeans",
+  "patch",
+  "raincoat",
+  "scarf",
+  "shirt",
+  "shoe",
+  "shorts",
+  "skirt",
+  "sneaker",
+  "sock",
+  "sunglasses",
+  "sweater",
+  "uniform",
+  "vest"
+]);
+
+const VEHICLE_HEADS = new Set([
+  "bicycle",
+  "bike",
+  "bus",
+  "car",
+  "cart",
+  "scooter",
+  "skateboard",
+  "truck",
+  "van",
+  "wagon"
 ]);
 
 const HUMOR_WORDS = new Set([
@@ -127,12 +331,128 @@ const IRREGULAR_PAST = new Set([
   "wrote"
 ]);
 
+const ACTION_DESTINATION_PREPOSITIONS = new Set([
+  "across",
+  "around",
+  "behind",
+  "beside",
+  "down",
+  "from",
+  "inside",
+  "into",
+  "near",
+  "off",
+  "onto",
+  "past",
+  "through",
+  "toward",
+  "towards",
+  "under",
+  "up"
+]);
+
+const STRONG_ACTION_VERBS = new Set([
+  "bump",
+  "bumped",
+  "catch",
+  "caught",
+  "chase",
+  "chased",
+  "clutch",
+  "clutched",
+  "crash",
+  "crashed",
+  "drop",
+  "dropped",
+  "fling",
+  "flung",
+  "grab",
+  "grabbed",
+  "hit",
+  "knock",
+  "knocked",
+  "land",
+  "landed",
+  "lift",
+  "lifted",
+  "lose",
+  "lost",
+  "nudge",
+  "nudged",
+  "punt",
+  "punted",
+  "push",
+  "pushed",
+  "ram",
+  "rammed",
+  "slip",
+  "slipped",
+  "smack",
+  "smacked",
+  "spot",
+  "spotted",
+  "splash",
+  "splashed",
+  "throw",
+  "threw",
+  "toss",
+  "tossed",
+  "trip",
+  "tripped"
+]);
+
+const CLAUSE_TRANSITION_WORDS = new Set([
+  "and",
+  "as",
+  "before",
+  "because",
+  "creating",
+  "sending",
+  "so",
+  "while"
+]);
+
+const ABSTRACT_RESULT_HEADS = new Set([
+  "chain",
+  "chaos",
+  "comedy",
+  "effect",
+  "gold",
+  "highlight",
+  "legend",
+  "magic",
+  "mess",
+  "moment",
+  "scene",
+  "spectacle",
+  "surprise",
+  "trouble"
+]);
+
 function isWordToken(token: TokenInfo): boolean {
   return token.type === "word";
 }
 
 function isCandidatePos(token: TokenInfo): boolean {
   return ["ADJ", "ADV", "NOUN", "PROPN", "VERB"].includes(token.pos);
+}
+
+function singularize(normalized: string): string {
+  if (/ies$/.test(normalized)) return `${normalized.slice(0, -3)}y`;
+  if (/(ches|shes|sses|xes|zes)$/.test(normalized)) return normalized.slice(0, -2);
+  if (normalized.endsWith("s") && !normalized.endsWith("ss")) return normalized.slice(0, -1);
+  return normalized;
+}
+
+function normalizedWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .match(/[a-z]+(?:'[a-z]+)?/g)
+    ?.map((word) => singularize(word)) ?? [];
+}
+
+function hasSemanticMatch(words: string[], heads: Set<string>): boolean {
+  return words.some((word) => heads.has(word));
 }
 
 function normalizedSnippetEdge(input: string, fromEnd: boolean): string {
@@ -307,6 +627,8 @@ function reconcileCandidateType(
 
 function inferPromptType(text: string, pos: string, normalized: string): PromptTypeKey | null {
   if (!text || STOPWORDS.has(normalized)) return null;
+  const words = normalizedWords(text);
+  const head = singularize(words[words.length - 1] ?? normalized);
   if (pos === "ADJ") return "Adjective";
   if (pos === "ADV") return "Adverb";
   if (pos === "VERB") {
@@ -316,19 +638,33 @@ function inferPromptType(text: string, pos: string, normalized: string): PromptT
   }
   if (pos === "PROPN") return "Proper Noun";
   if (pos === "NOUN") {
-    if (PLACE_HEADS.has(normalized)) return "Place";
-    if (OBJECT_HEADS.has(normalized)) return "Object";
+    if (hasSemanticMatch(words, PLACE_HEADS) || PLACE_HEADS.has(head)) return "Place";
+    if (hasSemanticMatch(words, VEHICLE_HEADS) || VEHICLE_HEADS.has(head)) return "Vehicle";
+    if (hasSemanticMatch(words, CLOTHING_HEADS) || CLOTHING_HEADS.has(head)) return "Clothing";
+    if (hasSemanticMatch(words, BODY_PART_HEADS) || BODY_PART_HEADS.has(head)) return "Body Part";
+    if (hasSemanticMatch(words, FOOD_HEADS) || FOOD_HEADS.has(head)) return "Food";
+    if (hasSemanticMatch(words, ANIMAL_HEADS) || ANIMAL_HEADS.has(head)) return "Animal";
+    if (hasSemanticMatch(words, PERSON_HEADS) || PERSON_HEADS.has(head)) return "Person";
+    if (hasSemanticMatch(words, OBJECT_HEADS) || OBJECT_HEADS.has(head)) return "Object";
     return "Noun";
   }
   return null;
 }
 
 function phraseType(words: TokenInfo[]): PromptTypeKey | null {
-  const normalized = words.map((word) => word.normal);
-  const head = normalized[normalized.length - 1];
-  if (PLACE_HEADS.has(head)) return "Place";
-  if (OBJECT_HEADS.has(head) || normalized.length >= 2) return "Object";
-  return inferPromptType(words.map((word) => word.text).join(" "), words[words.length - 1]?.pos ?? "", head);
+  const text = words.map((word) => word.text).join(" ");
+  const phraseWords = normalizedWords(text);
+  const head = phraseWords[phraseWords.length - 1] ?? singularize(words[words.length - 1]?.normal ?? "");
+  if (hasSemanticMatch(phraseWords, PLACE_HEADS) || PLACE_HEADS.has(head)) return "Place";
+  if (hasSemanticMatch(phraseWords, VEHICLE_HEADS) || VEHICLE_HEADS.has(head)) return "Vehicle";
+  if (hasSemanticMatch(phraseWords, CLOTHING_HEADS) || CLOTHING_HEADS.has(head)) return "Clothing";
+  if (hasSemanticMatch(phraseWords, BODY_PART_HEADS) || BODY_PART_HEADS.has(head)) return "Body Part";
+  if (hasSemanticMatch(phraseWords, FOOD_HEADS) || FOOD_HEADS.has(head)) return "Food";
+  if (hasSemanticMatch(phraseWords, ANIMAL_HEADS) || ANIMAL_HEADS.has(head)) return "Animal";
+  if (hasSemanticMatch(phraseWords, PERSON_HEADS) || PERSON_HEADS.has(head)) return "Person";
+  if (hasSemanticMatch(phraseWords, OBJECT_HEADS) || OBJECT_HEADS.has(head)) return "Object";
+  if (words.length >= 2 && ["NOUN", "PROPN"].includes(words[words.length - 1]?.pos ?? "")) return "Noun";
+  return inferPromptType(text, words[words.length - 1]?.pos ?? "", head);
 }
 
 function rarityBonus(normalized: string): number {
@@ -345,9 +681,16 @@ function humorBonus(normalized: string): number {
 
 function posWeight(type: PromptTypeKey): number {
   switch (type) {
-    case "Object":
+    case "Body Part":
+    case "Clothing":
+    case "Food":
+    case "Person":
+    case "Vehicle":
+      return 4.4;
     case "Place":
       return 4.5;
+    case "Object":
+      return 3.2;
     case "Adjective":
       return 4;
     case "Past Tense Verb":
@@ -356,10 +699,11 @@ function posWeight(type: PromptTypeKey): number {
     case "Verb":
       return 2.8;
     case "Noun":
+      return 3;
     case "Plural Noun":
+      return 3.2;
     case "Animal":
     case "Plural Animal":
-    case "Food":
       return 3.8;
     default:
       return 2;
@@ -386,6 +730,7 @@ function repeatedPenalty(normalized: string, counts: Map<string, number>): numbe
 
 function scoreCandidate(
   candidate: Omit<Candidate, "score">,
+  storyBody: string,
   storyLength: number,
   counts: Map<string, number>,
   protectedTerms: Set<string>
@@ -396,10 +741,102 @@ function scoreCandidate(
     rarityBonus(candidate.normalized) +
     humorBonus(candidate.normalized) +
     sentencePositionBonus(candidate.start, storyLength) -
+    structuralRiskPenalty(candidate, storyBody) -
     repeatedPenalty(candidate.normalized, counts) -
     anchorPenalty(candidate.normalized, protectedTerms) -
     (STOPWORDS.has(candidate.normalized) ? 5 : 0)
   );
+}
+
+function structuralRiskPenalty(candidate: Omit<Candidate, "score">, storyBody: string): number {
+  const before = storyBody.slice(0, candidate.start);
+  const after = storyBody.slice(candidate.end);
+  const left = normalizedSnippetEdge(before, true);
+  const right = normalizedSnippetEdge(after, false);
+  const nounish = [
+    "Noun",
+    "Plural Noun",
+    "Object",
+    "Place",
+    "Animal",
+    "Plural Animal",
+    "Food",
+    "Body Part",
+    "Person",
+    "Name",
+    "Proper Noun",
+    "Job",
+    "Clothing",
+    "Vehicle"
+  ].includes(candidate.type);
+
+  if (!nounish) return 0;
+
+  let penalty = 0;
+  const words = normalizedWords(candidate.text);
+  const head = words[words.length - 1] ?? "";
+
+  if (
+    new RegExp(
+      `\\b(${[...ACTION_DESTINATION_PREPOSITIONS].join("|")})\\s+(the|a|an|my|your|his|her|their|our)?\\s*$`
+    ).test(left)
+  ) {
+    penalty += 5;
+  }
+
+  if (
+    new RegExp(
+      `\\b(${[...STRONG_ACTION_VERBS].join("|")})\\s+(straight|right|carefully|wildly|suddenly|quickly)?\\s*(into|onto|under|through|toward|towards|across)?\\s*(the|a|an|my|your|his|her|their|our)?\\s*$`
+    ).test(left)
+  ) {
+    penalty += 4.5;
+  }
+
+  if (
+    /\b(his|her|their|our|my|your)\s*$/.test(left) &&
+    /^[a-z]+(?:\s+[a-z]+)?$/i.test(candidate.text) &&
+    /^\s+(is|was|were|kept|started|began|looked|stretched|stretching|flailing|swinging|untied|wobbling|dripping|clutching|holding|spinning)\b/i.test(
+      after
+    )
+  ) {
+    penalty += 9;
+  }
+
+  if (/^\s+of\s+(the|a|an|my|your|his|her|their|our)\b/.test(right)) {
+    penalty += 4;
+  }
+
+  if (
+    new RegExp(
+      `^\\s*(,\\s*)?(${[...CLAUSE_TRANSITION_WORDS].join("|")})\\b`
+    ).test(right)
+  ) {
+    penalty += 3.5;
+  }
+
+  if (
+    /\b(became|become|turns|turned|creating|created|made|make)\b.*\b(into|as)?\s*$/.test(left) &&
+    ABSTRACT_RESULT_HEADS.has(head)
+  ) {
+    penalty += 8;
+  }
+
+  if (
+    /\b(a|an)\s*$/.test(left) &&
+    ["Object", "Noun", "Food", "Body Part", "Vehicle", "Clothing"].includes(candidate.type)
+  ) {
+    penalty += 1.5;
+  }
+
+  if (/^\s+(that|who|which)\b/.test(right)) {
+    penalty += 2;
+  }
+
+  if (candidate.source === "phrase" && candidate.text.trim().split(/\s+/).length >= 2) {
+    penalty += 1;
+  }
+
+  return penalty;
 }
 
 function buildProtectedTermSet(seed: string, title: string): Set<string> {
@@ -496,18 +933,32 @@ function buildSingleTokenCandidates(tokens: TokenInfo[]): Array<Omit<Candidate, 
 
 function chooseTopCandidates(candidates: Candidate[]): Candidate[] {
   const chosen: Candidate[] = [];
+  const typeCounts = new Map<PromptTypeKey, number>();
 
   for (const candidate of candidates) {
-    if (chosen.length >= TARGET_BLANK_COUNT) break;
-    const overlaps = chosen.some(
-      (existing) => !(candidate.end <= existing.start || candidate.start >= existing.end)
-    );
-    if (overlaps) continue;
-    if (chosen.some((existing) => existing.normalized === candidate.normalized)) continue;
-    chosen.push(candidate);
+    if (!tryAddCandidate(chosen, typeCounts, candidate)) continue;
   }
 
   return chosen.sort((a, b) => a.start - b.start);
+}
+
+function tryAddCandidate(
+  chosen: Candidate[],
+  typeCounts: Map<PromptTypeKey, number>,
+  candidate: Candidate
+): HumorSpanRejectionReason | null {
+  if (chosen.length >= TARGET_BLANK_COUNT) return "type_cap_exceeded";
+  const overlaps = chosen.some(
+    (existing) => !(candidate.end <= existing.start || candidate.start >= existing.end)
+  );
+  if (overlaps) return "overlap";
+  if (chosen.some((existing) => existing.normalized === candidate.normalized)) return "normalized_duplicate";
+  const maxForType = MAX_TYPE_COUNTS[candidate.type];
+  const currentTypeCount = typeCounts.get(candidate.type) ?? 0;
+  if (typeof maxForType === "number" && currentTypeCount >= maxForType) return "type_cap_exceeded";
+  chosen.push(candidate);
+  typeCounts.set(candidate.type, currentTypeCount + 1);
+  return null;
 }
 
 function tokenIdForCandidate(candidate: Candidate, index: number): string {
@@ -524,24 +975,50 @@ export type BlankExtractionResult = {
 export function extractBlankedStory(seed: string, title: string, storyBody: string): BlankExtractionResult {
   const tokens = tokenizeWithOffsets(storyBody);
   const protectedTerms = buildProtectedTermSet(seed, title);
+  const scored = scoreLocalCandidates(tokens, storyBody, protectedTerms);
+
+  const chosen = chooseTopCandidates(scored);
+  const story = buildStoryFromCandidates(title, storyBody, chosen);
+
+  return {
+    story,
+    candidateCount: scored.length,
+    chosenCount: chosen.length
+  };
+}
+
+export function hasEnoughBlankCandidates(result: BlankExtractionResult): boolean {
+  return result.chosenCount >= MIN_BLANK_COUNT && result.chosenCount <= TARGET_BLANK_COUNT;
+}
+
+function scoreLocalCandidates(
+  tokens: TokenInfo[],
+  storyBody: string,
+  protectedTerms: Set<string>
+): Candidate[] {
   const rawCandidates = [...buildPhraseCandidates(tokens), ...buildSingleTokenCandidates(tokens)]
     .map((candidate) => reconcileCandidateType(candidate, storyBody))
     .filter((candidate): candidate is Omit<Candidate, "score"> => candidate !== null);
   const counts = candidateCounts(rawCandidates);
-  const scored = rawCandidates
+  return rawCandidates
     .map((candidate) => ({
       ...candidate,
-      score: scoreCandidate(candidate, storyBody.length, counts, protectedTerms)
+      score: scoreCandidate(candidate, storyBody, storyBody.length, counts, protectedTerms)
     }))
     .filter((candidate) => candidate.score > 0)
     .sort((a, b) => b.score - a.score || a.start - b.start);
+}
 
-  const chosen = chooseTopCandidates(scored);
+function buildStoryFromCandidates(
+  title: string,
+  storyBody: string,
+  candidates: Candidate[]
+): StoryTemplatePayload {
   let storyTemplate = "";
   let cursor = 0;
   const blanks: BlankToken[] = [];
 
-  chosen.forEach((candidate, index) => {
+  candidates.forEach((candidate, index) => {
     const id = tokenIdForCandidate(candidate, index);
     storyTemplate += storyBody.slice(cursor, candidate.start);
     storyTemplate += `[${id}]`;
@@ -551,16 +1028,205 @@ export function extractBlankedStory(seed: string, title: string, storyBody: stri
   storyTemplate += storyBody.slice(cursor);
 
   return {
-    story: {
-      title,
-      storyTemplate,
-      blanks
-    },
-    candidateCount: scored.length,
-    chosenCount: chosen.length
+    title,
+    storyTemplate,
+    blanks
   };
 }
 
-export function hasEnoughBlankCandidates(result: BlankExtractionResult): boolean {
-  return result.chosenCount >= MIN_BLANK_COUNT && result.chosenCount <= TARGET_BLANK_COUNT;
+function locateExactSpanMatches(storyBody: string, target: string): Array<{ start: number; end: number }> {
+  const trimmedTarget = target.trim();
+  if (!trimmedTarget) return [];
+  const matches: Array<{ start: number; end: number }> = [];
+  let cursor = 0;
+
+  while (cursor < storyBody.length) {
+    const index = storyBody.indexOf(trimmedTarget, cursor);
+    if (index === -1) break;
+    matches.push({ start: index, end: index + trimmedTarget.length });
+    cursor = index + trimmedTarget.length;
+  }
+
+  return matches;
+}
+
+function candidateFromRecommendedSpan(
+  storyBody: string,
+  tokens: TokenInfo[],
+  recommendation: HumorSpanRecommendation
+): { candidate?: Candidate; rejection?: HumorSpanSelectionRejection } {
+  const trimmedText = recommendation.text.trim();
+  if (!trimmedText) {
+    return {
+      rejection: {
+        text: recommendation.text,
+        reason: "no_match"
+      }
+    };
+  }
+
+  const matches = locateExactSpanMatches(storyBody, trimmedText);
+  if (matches.length === 0) {
+    return {
+      rejection: {
+        text: trimmedText,
+        reason: "no_match"
+      }
+    };
+  }
+  if (matches.length > 1) {
+    return {
+      rejection: {
+        text: trimmedText,
+        reason: "ambiguous_match"
+      }
+    };
+  }
+
+  const { start, end } = matches[0];
+  const spanTokens = tokens.filter(
+    (token) => isWordToken(token) && token.start >= start && token.end <= end
+  );
+  if (!spanTokens.length) {
+    return {
+      rejection: {
+        text: trimmedText,
+        reason: "partial_token"
+      }
+    };
+  }
+
+  if (spanTokens[0].start !== start || spanTokens[spanTokens.length - 1].end !== end) {
+    return {
+      rejection: {
+        text: trimmedText,
+        reason: "partial_token"
+      }
+    };
+  }
+
+  const text = storyBody.slice(start, end);
+  const type =
+    spanTokens.length === 1
+      ? inferPromptType(spanTokens[0].text, spanTokens[0].pos, spanTokens[0].normal)
+      : phraseType(spanTokens);
+  if (!type) {
+    return {
+      rejection: {
+        text,
+        reason: "untyped"
+      }
+    };
+  }
+
+  const normalized = spanTokens.map((token) => token.normal).join(" ");
+  const candidate = reconcileCandidateType(
+    {
+      start,
+      end,
+      text,
+      normalized,
+      type,
+      source: "model"
+    },
+    storyBody
+  );
+  if (!candidate) {
+    return {
+      rejection: {
+        text,
+        reason: "slot_incompatible"
+      }
+    };
+  }
+
+  return {
+    candidate: {
+      ...candidate,
+      score: 0
+    }
+  };
+}
+
+export function buildHumorShadowStory(
+  seed: string,
+  title: string,
+  storyBody: string,
+  recommendations: HumorSpanRecommendation[]
+): { story: StoryTemplatePayload; report: HumorSpanSelectionReport; candidateCount: number; chosenCount: number } {
+  const tokens = tokenizeWithOffsets(storyBody);
+  const protectedTerms = buildProtectedTermSet(seed, title);
+  const localScored = scoreLocalCandidates(tokens, storyBody, protectedTerms);
+  const localCounts = new Map<string, number>();
+  for (const candidate of localScored) {
+    localCounts.set(candidate.normalized, (localCounts.get(candidate.normalized) ?? 0) + 1);
+  }
+  const chosen: Candidate[] = [];
+  const typeCounts = new Map<PromptTypeKey, number>();
+  const rejections: HumorSpanSelectionRejection[] = [];
+  const seenTexts = new Set<string>();
+  const acceptedTexts: string[] = [];
+  const scoredModelCandidates: Candidate[] = [];
+
+  for (const recommendation of recommendations) {
+    const dedupeKey = recommendation.text.trim().toLowerCase();
+    if (!dedupeKey) continue;
+    if (seenTexts.has(dedupeKey)) {
+      rejections.push({ text: recommendation.text, reason: "duplicate_text" });
+      continue;
+    }
+    seenTexts.add(dedupeKey);
+
+    const { candidate, rejection } = candidateFromRecommendedSpan(storyBody, tokens, recommendation);
+    if (!candidate) {
+      if (rejection) rejections.push(rejection);
+      continue;
+    }
+    const structuralPenalty = structuralRiskPenalty(candidate, storyBody);
+    if (structuralPenalty >= 8) {
+      rejections.push({ text: candidate.text, reason: "structural_risk" });
+      continue;
+    }
+    const score =
+      scoreCandidate(candidate, storyBody, storyBody.length, localCounts, protectedTerms) +
+      2.5;
+    if (score <= 0.75) {
+      rejections.push({ text: candidate.text, reason: "structural_risk" });
+      continue;
+    }
+    scoredModelCandidates.push({ ...candidate, score });
+  }
+
+  scoredModelCandidates.sort((a, b) => b.score - a.score || a.start - b.start);
+
+  for (const candidate of scoredModelCandidates) {
+    const addResult = tryAddCandidate(chosen, typeCounts, candidate);
+    if (addResult) {
+      rejections.push({ text: candidate.text, reason: addResult });
+      continue;
+    }
+    acceptedTexts.push(candidate.text);
+  }
+
+  const acceptedBeforeBackfill = chosen.length;
+
+  for (const candidate of localScored) {
+    if (chosen.length >= TARGET_BLANK_COUNT) break;
+    tryAddCandidate(chosen, typeCounts, candidate);
+  }
+
+  const finalChosen = [...chosen].sort((a, b) => a.start - b.start);
+  return {
+    story: buildStoryFromCandidates(title, storyBody, finalChosen),
+    report: {
+      recommendedCount: recommendations.length,
+      acceptedCount: acceptedBeforeBackfill,
+      rejectedCount: rejections.length,
+      backfilledCount: Math.max(0, finalChosen.length - acceptedBeforeBackfill),
+      acceptedTexts,
+      rejections
+    },
+    candidateCount: localScored.length,
+    chosenCount: finalChosen.length
+  };
 }

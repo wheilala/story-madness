@@ -2,7 +2,7 @@ import { extractBlankedStory } from "@/lib/story-candidates";
 import { describe, expect, test } from "vitest";
 import { assessSeedAdherence, assessStoryQuality, fillStoryTemplate, parseTokens, validateStoryDraft } from "@/lib/story";
 import { normalizeBlank } from "@/lib/madlib-labels";
-import { parseTokenOccurrences } from "@/lib/story-format";
+import { buildStoryParts, parseTokenOccurrences } from "@/lib/story-format";
 
 function makeBlank(id: string, label: string, example: string) {
   return normalizeBlank({ id, label, example }, id, 0);
@@ -41,6 +41,19 @@ describe("story token utilities", () => {
     const template = "[NOUN_1] ran fast. then [NOUN_2] waved.";
     const output = fillStoryTemplate(template, { NOUN_1: "DOG", NOUN_2: "cAt" });
     expect(output.startsWith("DOG ran fast. then cAt waved.")).toBe(true);
+  });
+
+  test("normalizes a and an after inserted fills", () => {
+    const template = "Maya found a [NOUN_1] and an [OBJECT_2].";
+    const output = fillStoryTemplate(template, { NOUN_1: "umbrella", OBJECT_2: "hammer" });
+    expect(output).toContain("an umbrella");
+    expect(output).toContain("a hammer");
+  });
+
+  test("normalizes a and an in highlighted story parts too", () => {
+    const template = "Max fell into the middle of an [ADJECTIVE_1] scene.";
+    const parts = buildStoryParts(template, { ADJECTIVE_1: "silly" });
+    expect(parts.map((part) => part.text).join("")).toContain("a silly scene");
   });
 
   test("rejects story templates that reuse the same prompted token", () => {
@@ -188,6 +201,19 @@ describe("story token utilities", () => {
     expect(extracted.story.blanks.some((blank) => blank.type === "Object")).toBe(true);
     expect(extracted.story.blanks.some((blank) => blank.type === "Place")).toBe(true);
     expect(parseTokens(extracted.story.storyTemplate).length).toBe(extracted.story.blanks.length);
+  });
+
+  test("promotes semantically richer noun phrases beyond generic noun labels", () => {
+    const extracted = extractBlankedStory(
+      "A grandma causes chaos in a library",
+      "Library Ruckus",
+      "Grandma stepped inside with twinkling eyes, a striped shirt, and an oversized purse while the librarian watched a scooter skid past a cupcake stand."
+    );
+
+    const types = extracted.story.blanks.map((blank) => blank.type);
+    expect(types).toContain("Body Part");
+    expect(types).toContain("Clothing");
+    expect(types.some((type) => ["Person", "Vehicle", "Food", "Object"].includes(type))).toBe(true);
   });
 
   test("filters or remaps candidates before they become bad slot mismatches", () => {

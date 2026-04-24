@@ -8,6 +8,8 @@
     "start": "next start",
     "test": "vitest run",
     "test:harness": "vitest run tests/story-harness.test.ts --reporter=verbose",
+    "eval:reveal": "powershell -ExecutionPolicy Bypass -File .\\scripts\\reveal-eval.ps1 -Port 3001 -BatchSize 5 -MaxRuns 10",
+    "eval:selectors": "powershell -ExecutionPolicy Bypass -File .\\scripts\\selector-compare.ps1 -Port 3001 -BatchSize 5 -MaxRuns 10",
     "local:refresh": "powershell -ExecutionPolicy Bypass -File .\\scripts\\local-refresh.ps1 -Port 3001",
     "local:stop": "powershell -ExecutionPolicy Bypass -File .\\scripts\\local-stop.ps1 -Port 3001"
   },

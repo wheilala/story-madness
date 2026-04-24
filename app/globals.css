@@ -487,6 +487,44 @@ button[disabled] {
   gap: 12px;
 }
 
+.selectorCompareGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.selectorPanel {
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 253, 249, 0.72);
+  border: 1px solid rgba(91, 59, 23, 0.1);
+}
+
+.selectorPanelHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.selectorPanelHeader h3 {
+  margin: 6px 0 0;
+  font-family: var(--font-display), "Trebuchet MS", sans-serif;
+  font-size: 1.5rem;
+  line-height: 0.98;
+}
+
+.selectorFields {
+  grid-template-columns: 1fr;
+}
+
+.selectorRevealGrid .storyFrame {
+  margin: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .field {
   padding: 10px 0 0;
 }
@@ -736,6 +774,10 @@ button[disabled] {
   .stageHeader,
   .stageActions {
     align-items: flex-start;
+  }
+
+  .selectorCompareGrid {
+    grid-template-columns: 1fr;
   }
 }
 
