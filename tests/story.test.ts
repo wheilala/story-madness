@@ -1,5 +1,6 @@
+import { extractBlankedStory } from "@/lib/story-candidates";
 import { describe, expect, test } from "vitest";
-import { assessSeedAdherence, assessStoryQuality, fillStoryTemplate, parseTokens } from "@/lib/story";
+import { assessSeedAdherence, assessStoryQuality, fillStoryTemplate, parseTokens, validateStoryDraft } from "@/lib/story";
 import { normalizeBlank } from "@/lib/madlib-labels";
 import { parseTokenOccurrences } from "@/lib/story-format";
 
@@ -74,6 +75,29 @@ describe("story token utilities", () => {
     expect(report.reasons.some((reason) => reason.includes("ADVERB_1"))).toBe(true);
   });
 
+  test("does not misclassify direct objects after verbs as adverb slots", () => {
+    const report = assessStoryQuality({
+      title: "Cleanup scramble",
+      storyTemplate:
+        "Maya grabbed [OBJECT_1], waved at [PERSON_2], and carried [OBJECT_3] toward [PLACE_4] while [ANIMAL_5] watched [ADVERB_6] and [VERB_PAST_7] near [OBJECT_8], [OBJECT_9], and [OBJECT_10] before the whole messy afternoon finally settled down with enough extra filler words to keep this test well above the minimum word count requirement for quality checks.",
+      blanks: [
+        makeBlank("OBJECT_1", "object", "bucket"),
+        makeBlank("PERSON_2", "person", "neighbor"),
+        makeBlank("OBJECT_3", "object", "wagon"),
+        makeBlank("PLACE_4", "place", "driveway"),
+        makeBlank("ANIMAL_5", "animal", "dog"),
+        makeBlank("ADVERB_6", "adverb", "quietly"),
+        makeBlank("VERB_PAST_7", "past tense verb", "hustled"),
+        makeBlank("OBJECT_8", "object", "trash can"),
+        makeBlank("OBJECT_9", "object", "ladder"),
+        makeBlank("OBJECT_10", "object", "helmet")
+      ]
+    });
+
+    expect(report.reasons.some((reason) => reason.includes("OBJECT_1 uses Object in a adverb modifier slot"))).toBe(false);
+    expect(report.reasons.some((reason) => reason.includes("OBJECT_3 uses Object in a adverb modifier slot"))).toBe(false);
+  });
+
   test("rejects blanks that are glued to nearby letters for inflection", () => {
     const report = assessStoryQuality({
       title: "Suffix trouble",
@@ -139,5 +163,42 @@ describe("story token utilities", () => {
     expect(report.passes).toBe(true);
     expect(report.matchedKeywords).toContain("tunny");
     expect(report.matchedKeywords).toContain("granite");
+  });
+
+  test("does not flag sentence starters as recurring invented names", () => {
+    const result = validateStoryDraft("Garth the grumpy neighbor chases trash cans down the street", {
+      title: "Street Trouble",
+      storyTemplate:
+        "That made Garth grumble. That sent a trash can wobbling downhill. By the end, the street finally settled down.",
+      blanks: []
+    });
+
+    expect(result.cohesionReasons.some((reason) => reason.includes("That"))).toBe(false);
+  });
+
+  test("extracts juicy local blank candidates from authored prose", () => {
+    const extracted = extractBlankedStory(
+      "A grumpy dog causes chaos in a hotel",
+      "Lobby Trouble",
+      "The chunky dog dragged a shiny dishwasher rack across the fancy hotel lobby."
+    );
+
+    expect(extracted.chosenCount).toBeGreaterThan(0);
+    expect(extracted.story.blanks.some((blank) => blank.type === "Adjective")).toBe(true);
+    expect(extracted.story.blanks.some((blank) => blank.type === "Object")).toBe(true);
+    expect(extracted.story.blanks.some((blank) => blank.type === "Place")).toBe(true);
+    expect(parseTokens(extracted.story.storyTemplate).length).toBe(extracted.story.blanks.length);
+  });
+
+  test("filters or remaps candidates before they become bad slot mismatches", () => {
+    const extracted = extractBlankedStory(
+      "A windy street cleanup",
+      "Street scramble",
+      "Garth tried to calm the shouting crowd, grabbed a slippery bucket, and moved quickly toward the trash cans."
+    );
+
+    const report = assessStoryQuality(extracted.story);
+    expect(report.reasons.some((reason) => reason.includes("uses Object in a base verb slot"))).toBe(false);
+    expect(report.reasons.some((reason) => reason.includes("uses Object in a adverb modifier slot"))).toBe(false);
   });
 });

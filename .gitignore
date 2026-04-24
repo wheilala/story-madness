@@ -19,6 +19,8 @@ pnpm-debug.log*
 
 # Coverage/test artifacts
 coverage/
+artifacts/
+*.pid
 
 # OS/editor files
 .DS_Store

@@ -4,7 +4,6 @@ import { getOpenAIClient } from "@/lib/openai-client";
 import {
   CANONICAL_LABELS,
   PromptTypeKey,
-  canonicalTokenId,
   normalizeBlank,
   promptDefinition
 } from "@/lib/madlib-labels";
@@ -13,6 +12,8 @@ import {
   parseTokenOccurrences,
   parseTokens as parseTemplateTokens
 } from "@/lib/story-format";
+import { extractBlankedStory, hasEnoughBlankCandidates } from "@/lib/story-candidates";
+import { readDoc, wink } from "@/lib/wink";
 import {
   BlankToken,
   StoryGenerationAttemptDiagnostic,
@@ -53,32 +54,21 @@ export type GenerateStoryResult = {
 
 type AuthoredStoryScaffold = {
   title: string;
-  storyTemplate: string;
-  blanks: Array<Partial<BlankToken>>;
+  storyBody: string;
 };
 
 type RepairStats = {
-  aliasCollapseCount: number;
-  trimmedBlankCount: number;
-  tokenRewriteCount: number;
-  missingBlankCount: number;
+  candidateCount: number;
+  chosenCount: number;
   slotRepairCount: number;
 };
 
 const TARGET_BLANK_COUNT = 12;
 const MIN_BLANK_COUNT = 10;
 
-const blankSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  partOfSpeech: z.string().min(1),
-  example: z.string()
-});
-
 const storyResponseSchema = z.object({
   title: z.string().min(1),
-  storyTemplate: z.string().min(20),
-  blanks: z.array(blankSchema)
+  storyBody: z.string().min(80)
 });
 
 const SEED_STOP_WORDS = new Set([
@@ -146,6 +136,8 @@ const COMMON_CAPITALIZED_WORDS = new Set([
   "Everyone",
   "Meanwhile"
 ]);
+
+const ENABLE_WEAK_ENDING_CHECK = false;
 
 function dedupeReasons(items: string[]): string[] {
   return [...new Set(items)];
@@ -216,19 +208,13 @@ function createStoryPrompt(seed: string): string {
     "- Keep the setting physically consistent unless the story clearly moves to a new nearby place.",
     "- Make the story funny, surprising, and coherent for kids.",
     "- Use visual comedy and specific actions like wobbling, chasing, slipping, shouting, overreacting, spilling, or neighborhood commotion.",
-    "- Leave room for the blanks to amplify the chaos instead of making the base story random or vague.",
-    "- Use [TOKEN] blanks in the storyTemplate and include exactly 12 blanks.",
-    "- Every blank token must appear exactly once in storyTemplate.",
-    "- Use machine-style token ids like [NOUN_1], [VERB_PAST_2], [PLURAL_NOUN_3], or [PLURAL_ANIMAL_4].",
-    "- Do not attach letters to a blank to force grammar, such as [ANIMAL_1]s or [VERB_1]ed.",
-    `- Use labels only from this allowed set: ${CANONICAL_LABELS.join(", ")}.`,
-    "- Blanks must already represent the final grammatical form needed by the sentence.",
-    "- Qualifiers are okay only when they are part of the allowed set, such as Plural Noun, Plural Animal, Past Tense Verb, or Verb Ending In Ing.",
-    "- Tokens must appear in blanks array with id, label, partOfSpeech, example.",
+    "- Use vivid, concrete wording so a later local blank-selection system can find funny replaceable words and phrases.",
+    "- Do not include any [TOKEN] placeholders or blank markers in the story.",
+    "- Avoid repetitive filler words like scene, crowd, situation, or adventure unless they are truly needed.",
     "- No markdown, no explanation text, only JSON object.",
     "",
     "Return strict JSON with keys:",
-    "title, storyTemplate, blanks"
+    "title, storyBody"
   ].join("\n");
 }
 
@@ -246,11 +232,8 @@ function createRetryStoryPrompt(seed: string, previousIssues: string[] = []): st
     "- Use a clear setup, conflict, escalation, and resolution arc.",
     "- Start in-scene and never recap the seed or describe the premise from outside the story.",
     "- Keep the physical setting consistent and concrete.",
-    "- Use exactly 12 blanks with machine token ids.",
-    "- Each token id is unique and used exactly once in the template.",
-    `- Labels may only come from this set: ${CANONICAL_LABELS.join(", ")}.`,
-    "- Do not attach suffix letters to blanks.",
-    "- Each blank must fit the grammar slot naturally.",
+    "- Write the story as clean prose with no placeholder tokens.",
+    "- Use vivid, replaceable wording so a later local blank-selection system can extract around 10-12 funny blanks.",
     "- Keep the humor lively and the story coherent.",
     "- No markdown, no explanation text, only JSON object.",
     ...(previousIssues.length
@@ -276,6 +259,17 @@ function normalizedSnippetEdge(input: string, fromEnd: boolean): string {
   return chunk.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+function tokenPosList(text: string): string[] {
+  const normalized = text.trim();
+  if (!normalized) return [];
+  return (readDoc(normalized).tokens().out(wink.its.pos) as string[]).filter(Boolean);
+}
+
+function firstLexicalPos(text: string): string | null {
+  const list = tokenPosList(text);
+  return list[0] ?? null;
+}
+
 function hasAnyPattern(input: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(input));
 }
@@ -294,145 +288,15 @@ function extractSeedKeywords(seed: string): string[] {
   return keywords.slice(0, 8);
 }
 
-function normalizeBlanks(rawBlanks: unknown, tokens: string[]): { blanks: BlankToken[]; aliasCollapseCount: number; missingBlankCount: number } {
-  const byId = new Map<string, BlankToken>();
-  const rawArray = Array.isArray(rawBlanks) ? rawBlanks : [];
-  let aliasCollapseCount = 0;
-
-  for (const item of rawArray) {
-    if (!item || typeof item !== "object") continue;
-    const candidate = item as Partial<BlankToken>;
-    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
-    if (!id || !tokens.includes(id)) continue;
-    const index = tokens.indexOf(id);
-    const normalized = normalizeBlank(candidate, id, index >= 0 ? index : 0);
-    if (normalized.aliasCollapsedFrom) aliasCollapseCount += 1;
-    byId.set(id, normalized);
-  }
-
-  const blanks = tokens.map((id, index) => byId.get(id) ?? normalizeBlank({}, id, index));
-  return {
-    blanks,
-    aliasCollapseCount,
-    missingBlankCount: blanks.filter((blank) => !byId.has(blank.id)).length
-  };
-}
-
-function fillTokenWithExample(storyTemplate: string, tokenId: string, example: string): string {
-  const replacement = example.trim() || tokenId;
-  return storyTemplate.replaceAll(`[${tokenId}]`, replacement);
-}
-
-function trimBlankBudget(
-  storyTemplate: string,
-  blanks: BlankToken[],
-  targetCount: number
-): { storyTemplate: string; blanks: BlankToken[]; trimmedBlankCount: number } {
-  if (blanks.length <= targetCount) {
-    return { storyTemplate, blanks, trimmedBlankCount: 0 };
-  }
-
-  const kept = blanks.slice(0, targetCount);
-  const removed = blanks.slice(targetCount);
-  let nextTemplate = storyTemplate;
-
-  for (const blank of removed) {
-    nextTemplate = fillTokenWithExample(nextTemplate, blank.id, blank.example);
-  }
-
-  return {
-    storyTemplate: nextTemplate,
-    blanks: kept,
-    trimmedBlankCount: removed.length
-  };
-}
-
-function normalizeStoryTokens(
-  storyTemplate: string,
-  rawBlanks: unknown
-): { storyTemplate: string; blanks: unknown; tokenRewriteCount: number } {
-  const occurrences = parseTokenOccurrences(storyTemplate);
-  const rawArray = Array.isArray(rawBlanks) ? rawBlanks : [];
-  const blankById = new Map<string, Partial<BlankToken>>();
-
-  for (const item of rawArray) {
-    if (!item || typeof item !== "object") continue;
-    const candidate = item as Partial<BlankToken>;
-    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
-    if (!id || blankById.has(id)) continue;
-    blankById.set(id, candidate);
-  }
-
-  const usedIds = new Set<string>();
-  const duplicateCounts = new Map<string, number>();
-  const replacements: Array<{ start: number; end: number; nextId: string; blank: Partial<BlankToken> }> = [];
-
-  for (const occurrence of occurrences) {
-    const sourceBlank = rawArray[occurrence.index] as Partial<BlankToken> | undefined;
-    const canonicalBase = canonicalTokenId(sourceBlank?.label, occurrence.id, occurrence.index);
-    const seenCount = duplicateCounts.get(canonicalBase) ?? 0;
-    let nextId = canonicalBase;
-
-    if (seenCount > 0 || usedIds.has(canonicalBase)) {
-      let suffix = seenCount + 1;
-      do {
-        nextId = `${canonicalBase}_${suffix}`;
-        suffix += 1;
-      } while (usedIds.has(nextId));
-    }
-
-    duplicateCounts.set(canonicalBase, seenCount + 1);
-    usedIds.add(nextId);
-    replacements.push({
-      start: occurrence.start,
-      end: occurrence.end,
-      nextId,
-      blank: sourceBlank ?? blankById.get(occurrence.id) ?? {}
-    });
-  }
-
-  let rebuilt = "";
-  let cursor = 0;
-  let tokenRewriteCount = 0;
-
-  for (const replacement of replacements) {
-    rebuilt += storyTemplate.slice(cursor, replacement.start);
-    rebuilt += `[${replacement.nextId}]`;
-    cursor = replacement.end;
-    tokenRewriteCount += 1;
-  }
-  rebuilt += storyTemplate.slice(cursor);
-
-  return {
-    storyTemplate: rebuilt,
-    blanks: replacements.map((replacement) => ({
-      ...replacement.blank,
-      id: replacement.nextId
-    })),
-    tokenRewriteCount
-  };
-}
-
-function extractOrRepairBlanks(scaffold: AuthoredStoryScaffold): { story: StoryTemplatePayload; repairStats: RepairStats } {
-  const tokenNormalized = normalizeStoryTokens(scaffold.storyTemplate, scaffold.blanks);
-  const tokens = parseTokens(tokenNormalized.storyTemplate);
-  const normalized = normalizeBlanks(tokenNormalized.blanks, tokens);
-  const budgeted = trimBlankBudget(tokenNormalized.storyTemplate, normalized.blanks, TARGET_BLANK_COUNT);
-  const finalTokens = parseTokens(budgeted.storyTemplate);
-  const finalNormalized = normalizeBlanks(budgeted.blanks, finalTokens);
-  const slotRepaired = reconcileBlankTypesWithSlots({
-    title: scaffold.title,
-    storyTemplate: budgeted.storyTemplate,
-    blanks: finalNormalized.blanks
-  });
+function extractOrRepairBlanks(seed: string, scaffold: AuthoredStoryScaffold): { story: StoryTemplatePayload; repairStats: RepairStats } {
+  const extracted = extractBlankedStory(seed, scaffold.title, scaffold.storyBody);
+  const slotRepaired = reconcileBlankTypesWithSlots(extracted.story);
 
   return {
     story: slotRepaired.story,
     repairStats: {
-      aliasCollapseCount: normalized.aliasCollapseCount + finalNormalized.aliasCollapseCount,
-      trimmedBlankCount: budgeted.trimmedBlankCount,
-      tokenRewriteCount: tokenNormalized.tokenRewriteCount,
-      missingBlankCount: normalized.missingBlankCount + finalNormalized.missingBlankCount,
+      candidateCount: extracted.candidateCount,
+      chosenCount: extracted.chosenCount,
       slotRepairCount: slotRepaired.slotRepairCount
     }
   };
@@ -450,12 +314,16 @@ function inferSlotShape(before: string, after: string):
   | "freeform" {
   const left = normalizedSnippetEdge(before, true);
   const right = normalizedSnippetEdge(after, false);
+  const nextPos = firstLexicalPos(after);
 
   if (/\b(many|several|few|those|these)\s*$/.test(left)) return "plural_countable_noun";
   if (/\b(to|can|should|will|must|might|could)\s*$/.test(left)) return "base_verb";
   if (/\b(had|has|have)\s*$/.test(left)) return "past_tense_predicate";
   if (/\b(kept|started|began|went|was|were)\s*$/.test(left)) return "gerund_phrase";
-  if (/\b(a|an|the|this|that|my|your|his|her|their|our)\s*$/.test(left) && /^\s*[a-z]/.test(right)) {
+  if (
+    /\b(a|an|the|this|that|my|your|his|her|their|our)\s*$/.test(left) &&
+    (nextPos === "NOUN" || nextPos === "PROPN")
+  ) {
     return "adjective_before_noun";
   }
   if (/\b(a|an|the|this|that|my|your|his|her|their|our)\s*$/.test(left)) return "noun_phrase";
@@ -464,7 +332,9 @@ function inferSlotShape(before: string, after: string):
     return "adjective_predicate";
   }
   if (/\b(very|really|super|too)\s*$/.test(left)) return "adjective_predicate";
-  if (/\b(moved|ran|worked|laughed|spoke|walked|zoomed|grinned|tiptoed)\s*$/.test(left)) return "adverb_modifier";
+  if (/\b(moved|ran|worked|laughed|spoke|walked|zoomed|grinned|tiptoed)\s*$/.test(left)) {
+    return "adverb_modifier";
+  }
   return "freeform";
 }
 
@@ -537,12 +407,7 @@ function remapTypeForSlot(shape: ReturnType<typeof inferSlotShape>, type: Prompt
     case "adjective_before_noun":
     case "adjective_predicate":
       if (
-        [
-          "Noun",
-          "Object",
-          "Food",
-          "Emotion"
-        ].includes(type)
+        ["Noun", "Object", "Food", "Emotion", "Proper Noun"].includes(type)
       ) {
         return "Adjective";
       }
@@ -623,14 +488,17 @@ function assessStoryCohesion(seed: string, story: StoryTemplatePayload): string[
   }
 
   const seedKeywords = new Set(extractSeedKeywords(seed).map((keyword) => titleCase(keyword)));
-  const capitalizedMatches = text.match(/\b[A-Z][a-z]{2,}\b/g) ?? [];
-  const repeatedForeignNames = [...new Set(
-    capitalizedMatches.filter((word) => {
-      if (COMMON_CAPITALIZED_WORDS.has(word)) return false;
-      if (seedKeywords.has(word)) return false;
-      return capitalizedMatches.filter((item) => item === word).length > 1;
-    })
-  )];
+  const entityDetails = (readDoc(text).entities().out(wink.its.detail) as Array<{ value?: string; type?: string }>).filter(Boolean);
+  const personEntityCounts = new Map<string, number>();
+  for (const entity of entityDetails) {
+    if (entity.type !== "PERSON" || !entity.value) continue;
+    const value = entity.value.trim();
+    if (!value) continue;
+    personEntityCounts.set(value, (personEntityCounts.get(value) ?? 0) + 1);
+  }
+  const repeatedForeignNames = [...personEntityCounts.entries()]
+    .filter(([name, count]) => count > 1 && !COMMON_CAPITALIZED_WORDS.has(name) && !seedKeywords.has(name))
+    .map(([name]) => name);
   if (repeatedForeignNames.length) {
     reasons.push(`Story introduces recurring capitalized names not grounded in the seed: ${repeatedForeignNames.join(", ")}.`);
   }
@@ -649,9 +517,16 @@ function assessStoryCohesion(seed: string, story: StoryTemplatePayload): string[
     reasons.push("Story leans on generic scene language too often instead of specific visual details.");
   }
 
-  const resolutionSentence = sentences[sentences.length - 1]?.toLowerCase() ?? "";
-  if (!/\b(finally|at last|by the end|after that|once|soon)\b/.test(resolutionSentence)) {
-    reasons.push("Story ending feels weak or abrupt instead of landing a clear resolution beat.");
+  if (ENABLE_WEAK_ENDING_CHECK) {
+    const resolutionWindow = sentences.slice(-2).join(" ").toLowerCase();
+    const hasResolutionCue = /\b(finally|at last|by the end|after that|once|soon|in the end|eventually)\b/.test(resolutionWindow);
+    const hasResolutionOutcome =
+      /\b(settled|settled down|calmed|safe|saved|clean|cleaned|back where|home again|back to normal|normal again|under control|smiled|laughed|cheered|relieved|proud|learned|promised|agreed|returned|restored|rescued|fixed|tidy|caught|contained|organized|peaceful|quiet again|back on track)\b/.test(
+        resolutionWindow
+      );
+    if (!hasResolutionCue && !hasResolutionOutcome) {
+      reasons.push("Story ending feels weak or abrupt instead of landing a clear resolution beat.");
+    }
   }
 
   return reasons;
@@ -754,13 +629,14 @@ export function assessSeedAdherence(seed: string, story: StoryTemplatePayload): 
   const matchedKeywords = keywords.filter((keyword) => combined.includes(keyword));
   const openingMatches = keywords.filter((keyword) => opener.includes(keyword));
   const minimumMatches = keywords.length >= 5 ? 3 : 2;
+  const minimumOpeningMatches = keywords.length >= 4 ? 1 : Math.min(1, keywords.length);
   const reasons: string[] = [];
 
   if (matchedKeywords.length < minimumMatches) {
     reasons.push(`Story only matched ${matchedKeywords.length} of ${keywords.length} seed keywords.`);
   }
 
-  if (openingMatches.length < Math.min(2, keywords.length)) {
+  if (openingMatches.length < minimumOpeningMatches) {
     reasons.push("Story opening does not clearly anchor back to the seed.");
   }
 
@@ -776,6 +652,12 @@ export function validateStoryDraft(seed: string, story: StoryTemplatePayload, re
   const quality = assessStoryQuality(story);
   const seedReport = assessSeedAdherence(seed, story);
   const cohesionReasons = assessStoryCohesion(seed, story);
+
+  if (repairStats && (repairStats.chosenCount < MIN_BLANK_COUNT || repairStats.chosenCount > TARGET_BLANK_COUNT)) {
+    quality.reasons.push(`Local blank extraction produced ${repairStats.chosenCount} blanks, outside the allowed range.`);
+    quality.categories.schema.push(`Local blank extraction produced ${repairStats.chosenCount} blanks, outside the allowed range.`);
+    quality.passes = false;
+  }
 
   if (!quality.passes || !seedReport.passes || cohesionReasons.length > 0) {
     return {
@@ -794,10 +676,7 @@ export function validateStoryDraft(seed: string, story: StoryTemplatePayload, re
 
   const repaired = Boolean(
     repairStats &&
-      (repairStats.aliasCollapseCount > 0 ||
-        repairStats.trimmedBlankCount > 0 ||
-        repairStats.tokenRewriteCount > 0 ||
-        repairStats.missingBlankCount > 0)
+      repairStats.slotRepairCount > 0
   );
 
   return {
@@ -880,7 +759,7 @@ export async function generateStory(seed: string): Promise<GenerateStoryResult> 
 
   if (firstAttempt.scaffold) {
     const normalizeStart = now();
-    const repaired = extractOrRepairBlanks(firstAttempt.scaffold);
+    const repaired = extractOrRepairBlanks(seed, firstAttempt.scaffold);
     timings.push({ stage: "normalize_initial", durationMs: now() - normalizeStart });
     const validation = validateStoryDraft(seed, repaired.story, repaired.repairStats);
     if (validation.decision !== "retry") {
@@ -944,7 +823,7 @@ export async function generateStory(seed: string): Promise<GenerateStoryResult> 
 
   if (retryAttempt.scaffold) {
     const normalizeStart = now();
-    const repaired = extractOrRepairBlanks(retryAttempt.scaffold);
+    const repaired = extractOrRepairBlanks(seed, retryAttempt.scaffold);
     timings.push({ stage: "normalize_retry", durationMs: now() - normalizeStart });
     const validation = validateStoryDraft(seed, repaired.story, repaired.repairStats);
     if (validation.decision !== "retry") {

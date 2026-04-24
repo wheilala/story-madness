@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
+    "test:harness": "vitest run tests/story-harness.test.ts --reporter=verbose",
     "local:refresh": "powershell -ExecutionPolicy Bypass -File .\\scripts\\local-refresh.ps1 -Port 3001",
     "local:stop": "powershell -ExecutionPolicy Bypass -File .\\scripts\\local-stop.ps1 -Port 3001"
   },
@@ -16,6 +17,8 @@
     "openai": "^4.104.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "wink-eng-lite-web-model": "^1.8.1",
+    "wink-nlp": "^2.4.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
