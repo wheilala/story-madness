@@ -4,6 +4,7 @@ import { evaluateSafety } from "@/lib/safety/decision";
 import { StoryRevealResponse } from "@/lib/types";
 import { assertRateLimit } from "@/lib/rate-limit";
 import { logRunEvent } from "@/lib/supabase";
+import { evaluateRevealLint, retainRevealLintRecord } from "@/lib/reveal-lint";
 
 const schema = z.object({
   runId: z.string().uuid().optional(),
@@ -63,9 +64,26 @@ export async function handleStoryReveal(input: unknown, ip: string): Promise<Sto
   }
 
   const revealedStory = fillStoryTemplate(parsed.storyTemplate, parsed.fills);
+  const lint = evaluateRevealLint({
+    storyTemplate: parsed.storyTemplate,
+    fills: parsed.fills,
+    revealedStory
+  });
   const revealSafetyStartedAt = Date.now();
   const overallSafety = await evaluateSafety(revealedStory);
   const revealSafetyDurationMs = Date.now() - revealSafetyStartedAt;
+  let retainedLogPath: string | undefined;
+  try {
+    retainedLogPath = await retainRevealLintRecord({
+      runId,
+      storyTemplate: parsed.storyTemplate,
+      revealedStory,
+      fills: parsed.fills,
+      lint
+    });
+  } catch {
+    retainedLogPath = undefined;
+  }
 
   void logRunEvent({
     runId,
@@ -74,7 +92,11 @@ export async function handleStoryReveal(input: unknown, ip: string): Promise<Sto
     reason: overallSafety.reason,
     metadata: {
       fillSafetyDurationMs,
-      revealSafetyDurationMs
+      revealSafetyDurationMs,
+      lintIssueCount: lint.issueCount,
+      lintCategoryCounts: lint.categoryCounts,
+      lintIssues: lint.issues.slice(0, 8),
+      retainedLogPath: retainedLogPath ?? null
     }
   }).catch(() => {});
 
@@ -89,6 +111,10 @@ export async function handleStoryReveal(input: unknown, ip: string): Promise<Sto
   return {
     revealedStory,
     moderationDecision: overallSafety.decision,
-    moderationReason: overallSafety.reason
+    moderationReason: overallSafety.reason,
+    lint: {
+      ...lint,
+      retainedLogPath
+    }
   };
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { startTransition, useEffect, useState } from "react";
 import {
   BlankToken,
   ImageGenerateResponse,
@@ -10,11 +10,14 @@ import {
 import { hasDeterministicBlock } from "@/lib/safety/word-filter";
 import { buildStoryParts } from "@/lib/story-format";
 import { humanLabel } from "@/lib/madlib-labels";
+import { autoFillBlanks, FunnyWordsCatalog } from "@/lib/funny-words";
+import funnyWordsCatalogJson from "@/funny-words.json";
 
 type UiStatus = { kind: "ok" | "warn" | "block"; text: string } | null;
 type StepKey = "compose" | "fills" | "reveal" | "image";
 type LoadingStage = "story" | "reveal" | null;
 const SHOW_GENERATION_TEST_MODE = true;
+const funnyWordsCatalog = funnyWordsCatalogJson as FunnyWordsCatalog;
 
 const defaultSeed = "";
 const sampleSeeds = [
@@ -23,35 +26,49 @@ const sampleSeeds = [
   "Two siblings crash their bike into a pile of leaves and decide to become crossing guards."
 ];
 
-const loadingMessages: Record<Exclude<LoadingStage, null>, Array<{ title: string; body: string }>> = {
+const loadingMessages: Record<
+  Exclude<LoadingStage, null>,
+  Array<{ title: string; body: string; progress: number }>
+> = {
   story: [
     {
       title: "Catching your seed",
-      body: "Razzle is keeping the story close to your original idea so the silly plot does not wander off."
+      body: "Razzle is keeping the story close to your original idea so the silly plot does not wander off.",
+      progress: 0.2
     },
     {
       title: "Picking the goofy blanks",
-      body: "We are choosing word prompts that fit the story cleanly and only get used once."
+      body: "We are choosing word prompts that fit the story cleanly and only get used once.",
+      progress: 0.74
     },
     {
       title: "Tuning the chaos",
-      body: "The story is being checked for kid-safe fun, smooth grammar slots, and extra nonsense."
+      body: "The story is being checked for kid-safe fun, smooth grammar slots, and extra nonsense.",
+      progress: 1
     }
   ],
   reveal: [
     {
       title: "Dropping in your words",
-      body: "Razzle is weaving each fill into the story so every joke lands in the right place."
+      body: "Razzle is weaving each fill into the story so every joke lands in the right place.",
+      progress: 0.34
     },
     {
       title: "Polishing the reveal",
-      body: "We are checking the finished story and making sure the final version still feels playful and readable."
+      body: "We are checking the finished story and making sure the final version still feels playful and readable.",
+      progress: 0.74
     },
     {
       title: "Getting ready for the big laugh",
-      body: "Almost there. The full silly story is about to pop onto the page."
+      body: "Almost there. The full silly story is about to pop onto the page.",
+      progress: 1
     }
   ]
+};
+
+const defaultLoadingDurations: Record<Exclude<LoadingStage, null>, number> = {
+  story: 5600,
+  reveal: 2200
 };
 
 const stepLabels: Array<{ key: StepKey; short: string; title: string }> = [
@@ -102,6 +119,22 @@ function renderFailureList(items: string[]) {
   );
 }
 
+function renderLintIssueList(
+  items: Array<{ message: string; excerpt: string }>
+) {
+  if (!items.length) return null;
+  return (
+    <ul className="qualityList">
+      {items.map((item, index) => (
+        <li key={`${item.message}-${index}`}>
+          <strong>{item.message}</strong>
+          <div className="tiny lintExcerpt">{item.excerpt}</div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function HomePage() {
   const [runId] = useState<string>(() => createRunId());
   const [seed, setSeed] = useState(defaultSeed);
@@ -116,6 +149,8 @@ export default function HomePage() {
   const [rewriteSuggestion, setRewriteSuggestion] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<StepKey>("compose");
   const [loadingStage, setLoadingStage] = useState<LoadingStage>(null);
+  const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null);
+  const [loadingDurationTargets, setLoadingDurationTargets] = useState(defaultLoadingDurations);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const storyIsStale = Boolean(story?.storyTemplate && generatedSeed.trim() !== seed.trim());
 
@@ -124,16 +159,25 @@ export default function HomePage() {
   useEffect(() => {
     if (!loadingStage) {
       setLoadingMessageIndex(0);
+      setLoadingStartedAt(null);
       return;
     }
 
     setLoadingMessageIndex(0);
+    const startedAt = Date.now();
+    setLoadingStartedAt(startedAt);
     const timer = window.setInterval(() => {
-      setLoadingMessageIndex((prev) => (prev + 1) % loadingMessages[loadingStage].length);
-    }, 2200);
+      const elapsed = Date.now() - startedAt;
+      const targetDuration = loadingDurationTargets[loadingStage];
+      const progress = Math.min(0.98, elapsed / Math.max(targetDuration, 1200));
+      const nextIndex = loadingMessages[loadingStage].findIndex((message) => progress < message.progress);
+      setLoadingMessageIndex(
+        nextIndex === -1 ? loadingMessages[loadingStage].length - 1 : nextIndex
+      );
+    }, 120);
 
     return () => window.clearInterval(timer);
-  }, [loadingStage]);
+  }, [loadingDurationTargets, loadingStage]);
 
   const currentLoadingMessage = currentLoadingMessages[loadingMessageIndex] ?? null;
   const canShowFills = Boolean(story?.storyTemplate);
@@ -209,6 +253,20 @@ export default function HomePage() {
     );
   }
 
+  function renderRevealDiagnostics() {
+    if (!SHOW_GENERATION_TEST_MODE || !reveal?.lint?.issueCount) return null;
+
+    return (
+      <div className="status warn qualityBanner generationDebug noPrint">
+        <strong>Test mode: reveal lint</strong>
+        <p className="tiny debugIntro">
+          {reveal.lint.issueCount} potential naturalness issue{reveal.lint.issueCount === 1 ? "" : "s"} spotted.
+        </p>
+        {renderLintIssueList(reveal.lint.issues.slice(0, 6))}
+      </div>
+    );
+  }
+
   function resetGeneratedState() {
     setStory(null);
     setGeneratedSeed("");
@@ -260,6 +318,16 @@ export default function HomePage() {
     }
   }
 
+  function autoFillFunnyWords() {
+    if (!story?.blanks?.length) return;
+    const variantIndex = Math.floor(Date.now() / 1000) % 1000;
+    const nextFills = autoFillBlanks(story.blanks, funnyWordsCatalog, variantIndex);
+    startTransition(() => {
+      setFills(nextFills);
+      setFieldErrors({});
+    });
+  }
+
   async function onGenerateStory() {
     if (!seed.trim()) return;
     if (hasDeterministicBlock(seed)) {
@@ -267,6 +335,7 @@ export default function HomePage() {
       return;
     }
 
+    const startedAt = Date.now();
     setLoadingStage("story");
     setSeedStatus(null);
     resetGeneratedState();
@@ -310,6 +379,13 @@ export default function HomePage() {
       const safeBlanks = (storyResult.blanks ?? []).filter(
         (blank): blank is BlankToken => Boolean(blank && typeof blank.id === "string" && blank.id.trim())
       );
+      const storyDuration =
+        storyResult.diagnostics?.timings?.reduce((sum, timing) => sum + timing.durationMs, 0) ||
+        Date.now() - startedAt;
+      setLoadingDurationTargets((prev) => ({
+        ...prev,
+        story: Math.round(prev.story * 0.45 + storyDuration * 0.55)
+      }));
       setStory({ ...storyResult, blanks: safeBlanks });
       setGeneratedSeed(seed.trim());
       const nextFills: Record<string, string> = {};
@@ -331,6 +407,7 @@ export default function HomePage() {
     }
     if (Object.values(fieldErrors).some(Boolean)) return;
 
+    const startedAt = Date.now();
     setLoadingStage("reveal");
     try {
       const response = await fetch("/api/story/reveal", {
@@ -340,6 +417,11 @@ export default function HomePage() {
       });
       const data = (await response.json()) as StoryRevealResponse;
       setReveal(data);
+      const revealDuration = Date.now() - startedAt;
+      setLoadingDurationTargets((prev) => ({
+        ...prev,
+        reveal: Math.round(prev.reveal * 0.45 + revealDuration * 0.55)
+      }));
 
       setActiveStep("reveal");
     } finally {
@@ -523,6 +605,11 @@ export default function HomePage() {
               <span key={message.title} className={idx === loadingMessageIndex ? "active" : ""} />
             ))}
           </div>
+          <p className="tiny loadingHint">
+            {loadingStartedAt
+              ? `Step ${loadingMessageIndex + 1} of ${currentLoadingMessages.length}`
+              : null}
+          </p>
         </div>
       </section>
     );
@@ -585,7 +672,10 @@ export default function HomePage() {
               Back To Seed
             </button>
             <div className="btnRow">
-              <button className="secondary" onClick={() => window.print()}>
+              <button className="secondary" onClick={autoFillFunnyWords}>
+                Fill In Words For Me
+              </button>
+              <button className="ghost subtleAction" onClick={() => window.print()}>
                 Print Blank Worksheet
               </button>
               <button onClick={onRevealStory} disabled={storyIsStale}>
@@ -637,6 +727,7 @@ export default function HomePage() {
                 </div>
               )}
               {renderGenerationDiagnostics()}
+              {renderRevealDiagnostics()}
               <div className="storyFrame">
                 <h3>{story.title}</h3>
                 <div className="storyOut">{renderHighlightedStory()}</div>
@@ -646,7 +737,7 @@ export default function HomePage() {
                   Back To Words
                 </button>
                 <div className="btnRow">
-                  <button className="secondary" onClick={() => window.print()}>
+                  <button className="ghost subtleAction" onClick={() => window.print()}>
                     Print Story
                   </button>
                   <button onClick={onGenerateImage} disabled={loadingImage || storyIsStale}>
@@ -703,7 +794,7 @@ export default function HomePage() {
                   Back To Story
                 </button>
                 <div className="btnRow">
-                  <button className="secondary" onClick={() => window.print()}>
+                  <button className="ghost subtleAction" onClick={() => window.print()}>
                     Print Story + Coloring Page
                   </button>
                 </div>

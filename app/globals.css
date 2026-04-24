@@ -11,6 +11,8 @@
   --accent-soft: #f9d7a3;
   --sky: #7fcad6;
   --moss: #7da16d;
+  --razzle-gold: #f1b94d;
+  --razzle-cream: #fff0c9;
   --shadow: 0 18px 48px rgba(64, 38, 15, 0.1);
   --radius-xl: 28px;
   --radius-lg: 20px;
@@ -302,6 +304,12 @@ button[disabled] {
   box-shadow: 0 10px 24px rgba(49, 117, 138, 0.18);
 }
 
+.subtleAction {
+  color: rgba(91, 59, 23, 0.74);
+  background: rgba(255, 249, 240, 0.66);
+  border: 1px solid rgba(91, 59, 23, 0.08);
+}
+
 .ghost {
   color: #5b3b17;
   background: rgba(255, 255, 255, 0.74);
@@ -345,6 +353,10 @@ button[disabled] {
 
 .qualityList li + li {
   margin-top: 6px;
+}
+
+.lintExcerpt {
+  margin-top: 4px;
 }
 
 .ok {
@@ -663,14 +675,14 @@ button[disabled] {
 
 .loadingOrb span:nth-child(2) {
   inset: 12px;
-  border-right-color: var(--sky);
+  border-right-color: var(--razzle-gold);
   animation-duration: 2.15s;
   animation-direction: reverse;
 }
 
 .loadingOrb span:nth-child(3) {
   inset: 24px;
-  border-bottom-color: var(--moss);
+  border-bottom-color: var(--sky);
   animation-duration: 1.7s;
 }
 
@@ -699,6 +711,11 @@ button[disabled] {
 .loadingDots span.active {
   background: var(--accent);
   transform: scale(1.18);
+}
+
+.loadingHint {
+  margin-top: 10px;
+  color: rgba(95, 98, 95, 0.82);
 }
 
 @keyframes heroDrift {

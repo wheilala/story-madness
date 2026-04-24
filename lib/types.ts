@@ -83,6 +83,27 @@ export type StoryRevealResponse = {
   revealedStory: string;
   moderationDecision: SafetyDecision;
   moderationReason: string;
+  lint?: RevealLintReport;
+};
+
+export type RevealLintIssue = {
+  category:
+    | "verb_slot_naturalness"
+    | "noun_phrase_completion"
+    | "adjective_slot_naturalness"
+    | "semantic_class_mismatch"
+    | "countability_issue";
+  message: string;
+  excerpt: string;
+  tokenId?: string;
+  fill?: string;
+};
+
+export type RevealLintReport = {
+  issueCount: number;
+  categoryCounts: Record<string, number>;
+  issues: RevealLintIssue[];
+  retainedLogPath?: string;
 };
 
 export type ImageGenerateResponse = {
