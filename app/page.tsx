@@ -647,6 +647,11 @@ export default function HomePage() {
             </div>
           )}
           {renderGenerationDiagnostics()}
+          <div className="fillsToolbar noPrint">
+            <button className="secondary" onClick={autoFillFunnyWords}>
+              Fill In Words For Me
+            </button>
+          </div>
           <div className="fieldsGrid noPrint">
             {(story.blanks ?? []).map((blank: BlankToken, idx: number) => {
               const err = fieldErrors[blank.id];
@@ -672,9 +677,6 @@ export default function HomePage() {
               Back To Seed
             </button>
             <div className="btnRow">
-              <button className="secondary" onClick={autoFillFunnyWords}>
-                Fill In Words For Me
-              </button>
               <button className="ghost subtleAction" onClick={() => window.print()}>
                 Print Blank Worksheet
               </button>

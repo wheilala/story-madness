@@ -114,6 +114,12 @@ export type ImageGenerateResponse = {
   moderationReason: string;
 };
 
+export type StoryFunFactsResponse = {
+  topic: string;
+  facts: string[];
+  latencyMs?: number;
+};
+
 export type RevealEvaluationDeterministicReport = {
   unresolvedTokenCount: number;
   articleMismatchCount: number;

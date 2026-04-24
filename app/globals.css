@@ -486,6 +486,10 @@ button[disabled] {
   margin-bottom: 16px;
 }
 
+.fillsToolbar {
+  margin: 0 0 16px;
+}
+
 .storySummaryTitle {
   margin: 8px 0;
   font-family: var(--font-display), "Trebuchet MS", sans-serif;
