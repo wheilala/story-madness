@@ -15,19 +15,22 @@ export async function handleStoryGenerate(input: unknown, ip: string): Promise<S
   const parsed = schema.parse(input);
   const runId = parsed.runId ?? crypto.randomUUID();
 
-  await logRunCreated({ runId, status: "in_progress", stage: "seed" });
+  void logRunCreated({ runId, status: "in_progress", stage: "seed" }).catch(() => {});
+  const seedSafetyStartedAt = Date.now();
   const seedSafety = await evaluateSafety(parsed.seed);
-  await logRunEvent({
+  const seedSafetyDurationMs = Date.now() - seedSafetyStartedAt;
+  void logRunEvent({
     runId,
     stage: "seed",
     decision: seedSafety.decision,
     reason: seedSafety.reason,
     metadata: {
+      durationMs: seedSafetyDurationMs,
       deterministicHits: seedSafety.deterministicHits,
       moderationCategories: seedSafety.moderation.categories,
       moderationScores: seedSafety.moderation.categoryScores
     }
-  });
+  }).catch(() => {});
 
   if (seedSafety.decision === "BLOCK") {
     return {
@@ -40,19 +43,24 @@ export async function handleStoryGenerate(input: unknown, ip: string): Promise<S
   }
 
   const safeSeed = seedSafety.rewrittenText ?? parsed.seed;
-  const story = await generateStory(safeSeed);
+  const storyResult = await generateStory(safeSeed);
+  const story = storyResult.story;
+  const storySafetyStartedAt = Date.now();
   const storySafety = await evaluateSafety(`${story.title}\n${story.storyTemplate}`);
+  const storySafetyDurationMs = Date.now() - storySafetyStartedAt;
 
-  await logRunEvent({
+  void logRunEvent({
     runId,
     stage: "story",
     decision: storySafety.decision,
     reason: storySafety.reason,
     metadata: {
+      diagnostics: storyResult.diagnostics,
+      durationMs: storySafetyDurationMs,
       moderationCategories: storySafety.moderation.categories,
       moderationScores: storySafety.moderation.categoryScores
     }
-  });
+  }).catch(() => {});
 
   if (storySafety.decision === "BLOCK") {
     return {
@@ -69,6 +77,10 @@ export async function handleStoryGenerate(input: unknown, ip: string): Promise<S
     moderationDecision: seedSafety.decision === "REWRITE" ? "REWRITE" : "ALLOW",
     moderationReason: seedSafety.reason,
     rewriteApplied: seedSafety.decision === "REWRITE",
-    rewrittenSeed: seedSafety.rewrittenText
+    rewrittenSeed: seedSafety.rewrittenText,
+    generationWarning: storyResult.diagnostics.fallbackUsed
+      ? "Story generation fell back to a backup scaffold because the model output did not pass quality checks."
+      : undefined,
+    diagnostics: storyResult.diagnostics
   };
 }

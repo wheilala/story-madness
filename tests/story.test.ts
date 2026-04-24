@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { assessSeedAdherence, assessStoryQuality, fillStoryTemplate, parseTokens } from "@/lib/story";
+import { normalizeBlank } from "@/lib/madlib-labels";
 import { parseTokenOccurrences } from "@/lib/story-format";
+
+function makeBlank(id: string, label: string, example: string) {
+  return normalizeBlank({ id, label, example }, id, 0);
+}
 
 describe("story token utilities", () => {
   test("extracts unique tokens", () => {
@@ -34,7 +39,7 @@ describe("story token utilities", () => {
   test("adjusts inserted fill capitalization by sentence context", () => {
     const template = "[NOUN_1] ran fast. then [NOUN_2] waved.";
     const output = fillStoryTemplate(template, { NOUN_1: "DOG", NOUN_2: "cAt" });
-    expect(output.startsWith("Dog ran fast. then cat waved.")).toBe(true);
+    expect(output.startsWith("DOG ran fast. then cAt waved.")).toBe(true);
   });
 
   test("rejects story templates that reuse the same prompted token", () => {
@@ -43,8 +48,8 @@ describe("story token utilities", () => {
       storyTemplate:
         "A [NOUN_1] zoomed by while a helper tried to [VERB_1]. Later the same [NOUN_1] returned for chaos.",
       blanks: [
-        { id: "NOUN_1", label: "noun", partOfSpeech: "noun", example: "wagon" },
-        { id: "VERB_1", label: "verb", partOfSpeech: "verb", example: "dance" }
+        makeBlank("NOUN_1", "noun", "wagon"),
+        makeBlank("VERB_1", "verb", "dance")
       ]
     });
 
@@ -58,9 +63,9 @@ describe("story token utilities", () => {
       storyTemplate:
         "At the mall, a kid slipped into a [VERB_ING_1], then felt ready for [ADVERB_1]. Everyone laughed at the [NOUN_1].",
       blanks: [
-        { id: "VERB_ING_1", label: "verb ending in -ing", partOfSpeech: "verb", example: "running" },
-        { id: "ADVERB_1", label: "adverb", partOfSpeech: "adverb", example: "quickly" },
-        { id: "NOUN_1", label: "noun", partOfSpeech: "noun", example: "mess" }
+        makeBlank("VERB_ING_1", "verb ending in -ing", "running"),
+        makeBlank("ADVERB_1", "adverb", "quickly"),
+        makeBlank("NOUN_1", "noun", "mess")
       ]
     });
 
@@ -75,8 +80,8 @@ describe("story token utilities", () => {
       storyTemplate:
         "A parade of [ANIMAL_1]s raced across the street while a coach [VERB_1]ed loudly and everyone kept the story long enough to stay above the minimum word threshold by adding a lot of harmless filler words about the scene, the weather, the sidewalk, the crowd, and the neighborhood excitement.",
       blanks: [
-        { id: "ANIMAL_1", label: "animal", partOfSpeech: "noun", example: "zebra" },
-        { id: "VERB_1", label: "verb", partOfSpeech: "verb", example: "jump" }
+        makeBlank("ANIMAL_1", "animal", "zebra"),
+        makeBlank("VERB_1", "verb", "jump")
       ]
     });
 
@@ -89,12 +94,7 @@ describe("story token utilities", () => {
       title: "Too short",
       storyTemplate:
         "This story has [NOUN_1] [NOUN_2] [NOUN_3] [NOUN_4] [NOUN_5] [NOUN_6] [NOUN_7] [NOUN_8] [NOUN_9] and then a lot of extra filler words to push the total word count comfortably over the minimum quality threshold without adding any more prompt slots to the template because we only want to verify the lower prompt bound in this test case and nothing else.",
-      blanks: Array.from({ length: 9 }, (_, index) => ({
-        id: `NOUN_${index + 1}`,
-        label: "noun",
-        partOfSpeech: "noun",
-        example: "wagon"
-      }))
+      blanks: Array.from({ length: 9 }, (_, index) => makeBlank(`NOUN_${index + 1}`, "noun", "wagon"))
     });
 
     expect(report.passes).toBe(false);
@@ -109,12 +109,7 @@ describe("story token utilities", () => {
     const report = assessStoryQuality({
       title: "Too many",
       storyTemplate: template,
-      blanks: ids.map((id) => ({
-        id,
-        label: "noun",
-        partOfSpeech: "noun",
-        example: "wagon"
-      }))
+      blanks: ids.map((id) => makeBlank(id, "noun", "wagon"))
     });
 
     expect(report.passes).toBe(false);

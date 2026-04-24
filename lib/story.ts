@@ -1,17 +1,35 @@
-import { BlankToken, StoryTemplatePayload } from "@/lib/types";
-import { getOpenAIClient } from "@/lib/openai-client";
+import { z } from "zod";
 import { zodTextFormat } from "openai/helpers/zod";
+import { getOpenAIClient } from "@/lib/openai-client";
+import {
+  CANONICAL_LABELS,
+  PromptTypeKey,
+  canonicalTokenId,
+  normalizeBlank,
+  promptDefinition
+} from "@/lib/madlib-labels";
 import {
   fillStoryTemplate as fillStoryTemplateWithContext,
   parseTokenOccurrences,
   parseTokens as parseTemplateTokens
 } from "@/lib/story-format";
-import { CANONICAL_LABELS, canonicalTokenId, normalizeBlank } from "@/lib/madlib-labels";
-import { z } from "zod";
+import {
+  BlankToken,
+  StoryGenerationAttemptDiagnostic,
+  StoryPipelineDiagnostics,
+  StoryTemplatePayload
+} from "@/lib/types";
 
 export type StoryQualityReport = {
   passes: boolean;
   reasons: string[];
+  categories: {
+    blanks: string[];
+    schema: string[];
+    cohesion: string[];
+  };
+  grammarSlotIssueCount: number;
+  unreplacedTokenCount: number;
 };
 
 export type SeedAdherenceReport = {
@@ -19,6 +37,32 @@ export type SeedAdherenceReport = {
   reasons: string[];
   matchedKeywords: string[];
   targetKeywords: string[];
+};
+
+export type StoryValidationResult = {
+  decision: "accept" | "accept_with_blank_repair" | "retry";
+  quality: StoryQualityReport;
+  seed: SeedAdherenceReport;
+  cohesionReasons: string[];
+};
+
+export type GenerateStoryResult = {
+  story: StoryTemplatePayload;
+  diagnostics: StoryPipelineDiagnostics;
+};
+
+type AuthoredStoryScaffold = {
+  title: string;
+  storyTemplate: string;
+  blanks: Array<Partial<BlankToken>>;
+};
+
+type RepairStats = {
+  aliasCollapseCount: number;
+  trimmedBlankCount: number;
+  tokenRewriteCount: number;
+  missingBlankCount: number;
+  slotRepairCount: number;
 };
 
 const TARGET_BLANK_COUNT = 12;
@@ -82,6 +126,35 @@ const SEED_STOP_WORDS = new Set([
   "with"
 ]);
 
+const COMMON_CAPITALIZED_WORDS = new Set([
+  "A",
+  "An",
+  "The",
+  "That",
+  "This",
+  "One",
+  "Two",
+  "Three",
+  "By",
+  "At",
+  "In",
+  "On",
+  "After",
+  "Before",
+  "Then",
+  "Later",
+  "Everyone",
+  "Meanwhile"
+]);
+
+function dedupeReasons(items: string[]): string[] {
+  return [...new Set(items)];
+}
+
+function now(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
 function titleCase(input: string): string {
   return input.replace(/\b\w/g, (match) => match.toUpperCase());
 }
@@ -104,28 +177,26 @@ function buildFallbackStory(seed: string): StoryTemplatePayload {
     storyTemplate:
       `Everyone kept talking about the wild idea that kicked this off: "${seedSummary}".\n\n` +
       "At [PLACE_1], the whole crowd froze for one second, then burst into motion. " +
-      "One [ADJ_1] neighbor [VERB_PAST_1] toward the doorway while a wobbling pile of [PLURAL_NOUN_1] tipped sideways and made the mess look even bigger. " +
-      "The toddler blinked, lifted a chocolate-smeared [BODY_PART_1], and let out a tiny \"[SOUND_1]!\" that somehow made the room feel funnier than scarier.\n\n" +
-      "Someone pointed at a [NOUN_1] near the washing machine. Another person tried to [VERB_1] the crowd before the panic spread past the hallway. " +
-      "A helpful kid moved [ADVERB_1] across the floor, grabbed [PLURAL_NOUN_2], and started wiping up the sticky trail. " +
-      "Even a curious [ANIMAL_1] peered in as the laundry room buzzed with laughter, confusion, and relief.\n\n" +
-      "By the end, everybody agreed the whole adventure felt [ADJ_2] and unforgettable. " +
-      "The chocolate-covered toddler just grinned, hugged a [NOUN_2], and turned the neighborhood panic into a silly story people would repeat for weeks.",
+      "One [ADJECTIVE_2] neighbor [VERB_PAST_3] toward the doorway while a wobbling pile of [PLURAL_NOUN_4] tipped sideways and made the mess look even bigger. " +
+      "The main troublemaker blinked, lifted a sticky [BODY_PART_5], and let out a tiny \"[SOUND_6]!\" that somehow made the room feel funnier than scarier.\n\n" +
+      "Someone pointed at a [OBJECT_7] near the corner. Another helper tried to [VERB_8] the crowd before the panic spread farther down the hall. " +
+      "A helpful kid moved [ADVERB_9] across the floor, grabbed [PLURAL_NOUN_10], and started wiping up the mess. " +
+      "Even a curious [ANIMAL_11] peered in as the whole scene buzzed with laughter, confusion, and relief.\n\n" +
+      "By the end, everybody agreed the adventure felt [ADJECTIVE_12] and unforgettable.",
     blanks: [
-      { id: "PLACE_1", label: "place", partOfSpeech: "noun", example: "laundry room" },
-      { id: "ADJ_1", label: "adjective", partOfSpeech: "adjective", example: "frazzled" },
-      { id: "VERB_PAST_1", label: "past tense verb", partOfSpeech: "verb", example: "jumped" },
-      { id: "PLURAL_NOUN_1", label: "plural noun", partOfSpeech: "noun", example: "socks" },
-      { id: "BODY_PART_1", label: "body part", partOfSpeech: "noun", example: "hand" },
-      { id: "SOUND_1", label: "sound word", partOfSpeech: "noun", example: "eep" },
-      { id: "NOUN_1", label: "noun", partOfSpeech: "noun", example: "basket" },
-      { id: "VERB_1", label: "verb", partOfSpeech: "verb", example: "focus" },
-      { id: "ADVERB_1", label: "adverb", partOfSpeech: "adverb", example: "carefully" },
-      { id: "PLURAL_NOUN_2", label: "plural noun", partOfSpeech: "noun", example: "towels" },
-      { id: "ANIMAL_1", label: "animal", partOfSpeech: "noun", example: "puppy" },
-      { id: "ADJ_2", label: "adjective", partOfSpeech: "adjective", example: "ridiculous" },
-      { id: "NOUN_2", label: "noun", partOfSpeech: "noun", example: "blanket" }
-    ]
+      { id: "PLACE_1", label: "Place", partOfSpeech: "singular_noun", example: "laundry room" },
+      { id: "ADJECTIVE_2", label: "Adjective", partOfSpeech: "adjective", example: "frazzled" },
+      { id: "VERB_PAST_3", label: "Past Tense Verb", partOfSpeech: "past_tense_verb", example: "sprinted" },
+      { id: "PLURAL_NOUN_4", label: "Plural Noun", partOfSpeech: "plural_noun", example: "socks" },
+      { id: "BODY_PART_5", label: "Body Part", partOfSpeech: "singular_noun", example: "elbow" },
+      { id: "SOUND_6", label: "Sound Word", partOfSpeech: "interjection", example: "eep" },
+      { id: "OBJECT_7", label: "Object", partOfSpeech: "singular_noun", example: "basket" },
+      { id: "VERB_8", label: "Verb", partOfSpeech: "base_verb", example: "calm" },
+      { id: "ADVERB_9", label: "Adverb", partOfSpeech: "adverb", example: "carefully" },
+      { id: "PLURAL_NOUN_10", label: "Plural Noun", partOfSpeech: "plural_noun", example: "towels" },
+      { id: "ANIMAL_11", label: "Animal", partOfSpeech: "singular_noun", example: "puppy" },
+      { id: "ADJECTIVE_12", label: "Adjective", partOfSpeech: "adjective", example: "ridiculous" }
+    ].map((blank, index) => normalizeBlank(blank, blank.id, index))
   };
 }
 
@@ -135,31 +206,33 @@ function createStoryPrompt(seed: string): string {
     seed,
     "",
     "Requirements:",
-    "- One page style short story around 250-450 words.",
+    "- One page style short story around 250-430 words.",
+    "- Follow a clear four-beat arc: setup, conflict, escalating chaos, and satisfying resolution.",
+    "- Open directly inside the story world, not with commentary about the idea, the seed, or how the story began.",
     "- Stay tightly anchored to the seed's main character, setting, and inciting incident from beginning to end.",
     "- Mention at least two concrete details from the seed in the title or story body, not just once in the opening line.",
     "- Do not introduce recurring named characters, mascots, or proper nouns unless they are already present in the seed.",
     "- Do not quote or restate the seed over and over. Use the seed as story grounding, not repeated filler text.",
-    "- Use [TOKEN] blanks in the storyTemplate.",
-    `- Include exactly ${TARGET_BLANK_COUNT} blanks.`,
-    "- Every blank token must appear exactly once in storyTemplate. Never reuse the same token id twice.",
-    "- Use machine-style token ids like [NOUN_1], [VERB_PAST_1], or [PLURAL_NOUN_1], not human labels inside brackets.",
-    "- Do not attach letters to a blank to force grammar, such as [ANIMAL_1]s or [VERB_1]ed. The blank label must already match the final surface form.",
-    "- Tokens must appear in blanks array with id, label, partOfSpeech, example.",
-    "- Each blank must sit in a grammatically correct slot for its label.",
-    "- If a slot needs a noun, do not label it as a verb. If a slot needs an action, do not label it as a noun.",
+    "- Keep the setting physically consistent unless the story clearly moves to a new nearby place.",
+    "- Make the story funny, surprising, and coherent for kids.",
+    "- Use visual comedy and specific actions like wobbling, chasing, slipping, shouting, overreacting, spilling, or neighborhood commotion.",
+    "- Leave room for the blanks to amplify the chaos instead of making the base story random or vague.",
+    "- Use [TOKEN] blanks in the storyTemplate and include exactly 12 blanks.",
+    "- Every blank token must appear exactly once in storyTemplate.",
+    "- Use machine-style token ids like [NOUN_1], [VERB_PAST_2], [PLURAL_NOUN_3], or [PLURAL_ANIMAL_4].",
+    "- Do not attach letters to a blank to force grammar, such as [ANIMAL_1]s or [VERB_1]ed.",
     `- Use labels only from this allowed set: ${CANONICAL_LABELS.join(", ")}.`,
-    "- Keep labels simple and canonical.",
-    "- Qualifiers are okay only when they are part of the allowed set, such as 'Plural Noun', 'Past Tense Verb', or 'Verb Ending In Ing'.",
-    "- Avoid made-up contextual labels like 'small obstacle on street plural', 'cookie plural', or 'name of the little girl'.",
-    "- Keep tone funny, non-violent, kid-safe.",
+    "- Blanks must already represent the final grammatical form needed by the sentence.",
+    "- Qualifiers are okay only when they are part of the allowed set, such as Plural Noun, Plural Animal, Past Tense Verb, or Verb Ending In Ing.",
+    "- Tokens must appear in blanks array with id, label, partOfSpeech, example.",
+    "- No markdown, no explanation text, only JSON object.",
     "",
     "Return strict JSON with keys:",
     "title, storyTemplate, blanks"
   ].join("\n");
 }
 
-function createRetryStoryPrompt(seed: string): string {
+function createRetryStoryPrompt(seed: string, previousIssues: string[] = []): string {
   return [
     "You previously generated output that did not meet quality requirements.",
     "Regenerate now as strict JSON with stronger compliance.",
@@ -168,141 +241,30 @@ function createRetryStoryPrompt(seed: string): string {
     seed,
     "",
     "Hard requirements:",
-    "- 300-500 words in storyTemplate.",
-    "- The story must clearly remain about the original seed and repeat concrete seed details naturally across the story.",
-    "- Do not invent a recurring named helper or narrator unless the seed includes one.",
-    "- Avoid repeated restatements of the seed text.",
-    `- Include exactly ${TARGET_BLANK_COUNT} blanks using [TOKEN] format.`,
-    `- Use labels only from this allowed set: ${CANONICAL_LABELS.join(", ")}.`,
-    "- Keep labels simple and canonical, with qualifiers only when they are part of the allowed set.",
-    "- Use machine token ids like [NOUN_1] and never attach suffixes like s, ed, or ing to a blank in the template.",
-    "- Every token id is unique and used exactly once in the storyTemplate.",
-    "- Every blank must fit its grammar slot naturally.",
-    "- Family-safe humor and coherent narrative.",
+    "- 280-450 words in storyTemplate.",
+    "- Keep the story clearly about the original seed all the way through.",
+    "- Use a clear setup, conflict, escalation, and resolution arc.",
+    "- Start in-scene and never recap the seed or describe the premise from outside the story.",
+    "- Keep the physical setting consistent and concrete.",
+    "- Use exactly 12 blanks with machine token ids.",
+    "- Each token id is unique and used exactly once in the template.",
+    `- Labels may only come from this set: ${CANONICAL_LABELS.join(", ")}.`,
+    "- Do not attach suffix letters to blanks.",
+    "- Each blank must fit the grammar slot naturally.",
+    "- Keep the humor lively and the story coherent.",
     "- No markdown, no explanation text, only JSON object.",
-    "",
-    "JSON keys only: title, storyTemplate, blanks"
+    ...(previousIssues.length
+      ? [
+          "",
+          "Fix these specific problems from the last attempt:",
+          ...previousIssues.slice(0, 8).map((issue) => `- ${issue}`)
+        ]
+      : [])
   ].join("\n");
 }
 
 export function parseTokens(template: string): string[] {
   return parseTemplateTokens(template);
-}
-
-function toBlankToken(id: string): BlankToken {
-  return normalizeBlank({}, id, 0);
-}
-
-function normalizeBlanks(
-  rawBlanks: unknown,
-  tokens: string[]
-): BlankToken[] {
-  const byId = new Map<string, BlankToken>();
-  const rawArray = Array.isArray(rawBlanks) ? rawBlanks : [];
-
-  for (const item of rawArray) {
-    if (!item || typeof item !== "object") continue;
-    const candidate = item as Partial<BlankToken>;
-    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
-    if (!id || !tokens.includes(id)) continue;
-    const index = tokens.indexOf(id);
-    byId.set(id, normalizeBlank(candidate, id, index >= 0 ? index : 0));
-  }
-
-  return tokens.map((id, index) => byId.get(id) ?? normalizeBlank({}, id, index));
-}
-
-function fillTokenWithExample(storyTemplate: string, tokenId: string, example: string): string {
-  const replacement = example.trim() || tokenId;
-  return storyTemplate.replaceAll(`[${tokenId}]`, replacement);
-}
-
-function trimBlankBudget(
-  storyTemplate: string,
-  blanks: BlankToken[],
-  targetCount: number
-): { storyTemplate: string; blanks: BlankToken[] } {
-  if (blanks.length <= targetCount) {
-    return { storyTemplate, blanks };
-  }
-
-  const kept = blanks.slice(0, targetCount);
-  const removed = blanks.slice(targetCount);
-  let nextTemplate = storyTemplate;
-
-  for (const blank of removed) {
-    nextTemplate = fillTokenWithExample(nextTemplate, blank.id, blank.example);
-  }
-
-  return {
-    storyTemplate: nextTemplate,
-    blanks: kept
-  };
-}
-
-function dedupeStoryTemplate(
-  storyTemplate: string,
-  rawBlanks: unknown
-): { storyTemplate: string; blanks: unknown } {
-  const occurrences = parseTokenOccurrences(storyTemplate);
-  const rawArray = Array.isArray(rawBlanks) ? rawBlanks : [];
-  const blankById = new Map<string, Partial<BlankToken>>();
-
-  for (const item of rawArray) {
-    if (!item || typeof item !== "object") continue;
-    const candidate = item as Partial<BlankToken>;
-    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
-    if (!id || blankById.has(id)) continue;
-    blankById.set(id, candidate);
-  }
-
-  const usedIds = new Set<string>();
-  const duplicateCounts = new Map<string, number>();
-  const replacements: Array<{ start: number; end: number; nextId: string }> = [];
-  const normalizedBlanks: BlankToken[] = [];
-
-  for (const occurrence of occurrences) {
-    const sourceBlank = rawArray[occurrence.index] as Partial<BlankToken> | undefined;
-    const baseId = canonicalTokenId(sourceBlank?.label, occurrence.id, occurrence.index);
-    const seenCount = duplicateCounts.get(baseId) ?? 0;
-    let nextId = baseId;
-
-    if (seenCount > 0 || usedIds.has(baseId)) {
-      let suffix = seenCount + 1;
-      do {
-        nextId = `${baseId}_${suffix}`;
-        suffix += 1;
-      } while (usedIds.has(nextId));
-    }
-
-    duplicateCounts.set(baseId, seenCount + 1);
-    usedIds.add(nextId);
-    replacements.push({ start: occurrence.start, end: occurrence.end, nextId });
-    normalizedBlanks.push(
-      normalizeBlank(sourceBlank ?? blankById.get(occurrence.id) ?? blankById.get(baseId) ?? {}, nextId, normalizedBlanks.length)
-    );
-  }
-
-  if (!replacements.some((item, index) => item.nextId !== occurrences[index]?.id)) {
-    return {
-      storyTemplate,
-      blanks: rawBlanks
-    };
-  }
-
-  let rebuilt = "";
-  let cursor = 0;
-  for (const replacement of replacements) {
-    rebuilt += storyTemplate.slice(cursor, replacement.start);
-    rebuilt += `[${replacement.nextId}]`;
-    cursor = replacement.end;
-  }
-  rebuilt += storyTemplate.slice(cursor);
-
-  return {
-    storyTemplate: rebuilt,
-    blanks: normalizedBlanks
-  };
 }
 
 function wordCount(text: string): number {
@@ -312,35 +274,6 @@ function wordCount(text: string): number {
 function normalizedSnippetEdge(input: string, fromEnd: boolean): string {
   const chunk = fromEnd ? input.slice(-40) : input.slice(0, 40);
   return chunk.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-function looksVerbLabel(label: string): boolean {
-  return /\bverb\b/.test(label) || /\bverb ending in -ing\b/.test(label) || /\bpast tense verb\b/.test(label);
-}
-
-function looksAdverbLabel(label: string): boolean {
-  return /\badverb\b/.test(label);
-}
-
-function looksAdjectiveLabel(label: string): boolean {
-  return /\badjective\b/.test(label) && !looksAdverbLabel(label);
-}
-
-function looksNounLabel(label: string): boolean {
-  return [
-    "noun",
-    "plural noun",
-    "animal",
-    "body part",
-    "place",
-    "name",
-    "number",
-    "sound word",
-    "exclamation",
-    "color",
-    "material",
-    "food"
-  ].some((candidate) => label.includes(candidate));
 }
 
 function hasAnyPattern(input: string, patterns: RegExp[]): boolean {
@@ -358,60 +291,398 @@ function extractSeedKeywords(seed: string): string[] {
     if (!keywords.includes(normalized)) keywords.push(normalized);
   }
 
-  return keywords.slice(0, 6);
+  return keywords.slice(0, 8);
+}
+
+function normalizeBlanks(rawBlanks: unknown, tokens: string[]): { blanks: BlankToken[]; aliasCollapseCount: number; missingBlankCount: number } {
+  const byId = new Map<string, BlankToken>();
+  const rawArray = Array.isArray(rawBlanks) ? rawBlanks : [];
+  let aliasCollapseCount = 0;
+
+  for (const item of rawArray) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Partial<BlankToken>;
+    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+    if (!id || !tokens.includes(id)) continue;
+    const index = tokens.indexOf(id);
+    const normalized = normalizeBlank(candidate, id, index >= 0 ? index : 0);
+    if (normalized.aliasCollapsedFrom) aliasCollapseCount += 1;
+    byId.set(id, normalized);
+  }
+
+  const blanks = tokens.map((id, index) => byId.get(id) ?? normalizeBlank({}, id, index));
+  return {
+    blanks,
+    aliasCollapseCount,
+    missingBlankCount: blanks.filter((blank) => !byId.has(blank.id)).length
+  };
+}
+
+function fillTokenWithExample(storyTemplate: string, tokenId: string, example: string): string {
+  const replacement = example.trim() || tokenId;
+  return storyTemplate.replaceAll(`[${tokenId}]`, replacement);
+}
+
+function trimBlankBudget(
+  storyTemplate: string,
+  blanks: BlankToken[],
+  targetCount: number
+): { storyTemplate: string; blanks: BlankToken[]; trimmedBlankCount: number } {
+  if (blanks.length <= targetCount) {
+    return { storyTemplate, blanks, trimmedBlankCount: 0 };
+  }
+
+  const kept = blanks.slice(0, targetCount);
+  const removed = blanks.slice(targetCount);
+  let nextTemplate = storyTemplate;
+
+  for (const blank of removed) {
+    nextTemplate = fillTokenWithExample(nextTemplate, blank.id, blank.example);
+  }
+
+  return {
+    storyTemplate: nextTemplate,
+    blanks: kept,
+    trimmedBlankCount: removed.length
+  };
+}
+
+function normalizeStoryTokens(
+  storyTemplate: string,
+  rawBlanks: unknown
+): { storyTemplate: string; blanks: unknown; tokenRewriteCount: number } {
+  const occurrences = parseTokenOccurrences(storyTemplate);
+  const rawArray = Array.isArray(rawBlanks) ? rawBlanks : [];
+  const blankById = new Map<string, Partial<BlankToken>>();
+
+  for (const item of rawArray) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Partial<BlankToken>;
+    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+    if (!id || blankById.has(id)) continue;
+    blankById.set(id, candidate);
+  }
+
+  const usedIds = new Set<string>();
+  const duplicateCounts = new Map<string, number>();
+  const replacements: Array<{ start: number; end: number; nextId: string; blank: Partial<BlankToken> }> = [];
+
+  for (const occurrence of occurrences) {
+    const sourceBlank = rawArray[occurrence.index] as Partial<BlankToken> | undefined;
+    const canonicalBase = canonicalTokenId(sourceBlank?.label, occurrence.id, occurrence.index);
+    const seenCount = duplicateCounts.get(canonicalBase) ?? 0;
+    let nextId = canonicalBase;
+
+    if (seenCount > 0 || usedIds.has(canonicalBase)) {
+      let suffix = seenCount + 1;
+      do {
+        nextId = `${canonicalBase}_${suffix}`;
+        suffix += 1;
+      } while (usedIds.has(nextId));
+    }
+
+    duplicateCounts.set(canonicalBase, seenCount + 1);
+    usedIds.add(nextId);
+    replacements.push({
+      start: occurrence.start,
+      end: occurrence.end,
+      nextId,
+      blank: sourceBlank ?? blankById.get(occurrence.id) ?? {}
+    });
+  }
+
+  let rebuilt = "";
+  let cursor = 0;
+  let tokenRewriteCount = 0;
+
+  for (const replacement of replacements) {
+    rebuilt += storyTemplate.slice(cursor, replacement.start);
+    rebuilt += `[${replacement.nextId}]`;
+    cursor = replacement.end;
+    tokenRewriteCount += 1;
+  }
+  rebuilt += storyTemplate.slice(cursor);
+
+  return {
+    storyTemplate: rebuilt,
+    blanks: replacements.map((replacement) => ({
+      ...replacement.blank,
+      id: replacement.nextId
+    })),
+    tokenRewriteCount
+  };
+}
+
+function extractOrRepairBlanks(scaffold: AuthoredStoryScaffold): { story: StoryTemplatePayload; repairStats: RepairStats } {
+  const tokenNormalized = normalizeStoryTokens(scaffold.storyTemplate, scaffold.blanks);
+  const tokens = parseTokens(tokenNormalized.storyTemplate);
+  const normalized = normalizeBlanks(tokenNormalized.blanks, tokens);
+  const budgeted = trimBlankBudget(tokenNormalized.storyTemplate, normalized.blanks, TARGET_BLANK_COUNT);
+  const finalTokens = parseTokens(budgeted.storyTemplate);
+  const finalNormalized = normalizeBlanks(budgeted.blanks, finalTokens);
+  const slotRepaired = reconcileBlankTypesWithSlots({
+    title: scaffold.title,
+    storyTemplate: budgeted.storyTemplate,
+    blanks: finalNormalized.blanks
+  });
+
+  return {
+    story: slotRepaired.story,
+    repairStats: {
+      aliasCollapseCount: normalized.aliasCollapseCount + finalNormalized.aliasCollapseCount,
+      trimmedBlankCount: budgeted.trimmedBlankCount,
+      tokenRewriteCount: tokenNormalized.tokenRewriteCount,
+      missingBlankCount: normalized.missingBlankCount + finalNormalized.missingBlankCount,
+      slotRepairCount: slotRepaired.slotRepairCount
+    }
+  };
+}
+
+function inferSlotShape(before: string, after: string):
+  | "plural_countable_noun"
+  | "noun_phrase"
+  | "base_verb"
+  | "past_tense_predicate"
+  | "gerund_phrase"
+  | "adjective_before_noun"
+  | "adjective_predicate"
+  | "adverb_modifier"
+  | "freeform" {
+  const left = normalizedSnippetEdge(before, true);
+  const right = normalizedSnippetEdge(after, false);
+
+  if (/\b(many|several|few|those|these)\s*$/.test(left)) return "plural_countable_noun";
+  if (/\b(to|can|should|will|must|might|could)\s*$/.test(left)) return "base_verb";
+  if (/\b(had|has|have)\s*$/.test(left)) return "past_tense_predicate";
+  if (/\b(kept|started|began|went|was|were)\s*$/.test(left)) return "gerund_phrase";
+  if (/\b(a|an|the|this|that|my|your|his|her|their|our)\s*$/.test(left) && /^\s*[a-z]/.test(right)) {
+    return "adjective_before_noun";
+  }
+  if (/\b(a|an|the|this|that|my|your|his|her|their|our)\s*$/.test(left)) return "noun_phrase";
+  if (/\b(for|with|under|inside|near|around|into|onto|beside|behind|at)\s*$/.test(left)) return "noun_phrase";
+  if (/\b(is|are|was|were|feel|seem|look)\s*$/.test(left) && /^[\s]*[,.;!?]/.test(after)) {
+    return "adjective_predicate";
+  }
+  if (/\b(very|really|super|too)\s*$/.test(left)) return "adjective_predicate";
+  if (/\b(moved|ran|worked|laughed|spoke|walked|zoomed|grinned|tiptoed)\s*$/.test(left)) return "adverb_modifier";
+  return "freeform";
+}
+
+function slotAcceptsType(shape: ReturnType<typeof inferSlotShape>, type: PromptTypeKey): boolean {
+  const singularNounish: PromptTypeKey[] = [
+    "Noun",
+    "Person",
+    "Place",
+    "Object",
+    "Animal",
+    "Food",
+    "Body Part",
+    "Job",
+    "Name",
+    "Proper Noun",
+    "Clothing",
+    "Vehicle",
+    "School Subject",
+    "Holiday",
+    "Emotion"
+  ];
+
+  switch (shape) {
+    case "plural_countable_noun":
+      return type === "Plural Noun" || type === "Plural Animal";
+    case "noun_phrase":
+      return singularNounish.includes(type) || type === "Plural Noun" || type === "Plural Animal" || type === "Number";
+    case "base_verb":
+      return type === "Verb";
+    case "past_tense_predicate":
+      return type === "Past Tense Verb";
+    case "gerund_phrase":
+      return type === "Verb Ending In Ing";
+    case "adjective_before_noun":
+    case "adjective_predicate":
+      return type === "Adjective" || type === "Color";
+    case "adverb_modifier":
+      return type === "Adverb";
+    case "freeform":
+      return true;
+  }
+}
+
+function remapTypeForSlot(shape: ReturnType<typeof inferSlotShape>, type: PromptTypeKey): PromptTypeKey | null {
+  if (slotAcceptsType(shape, type)) return type;
+
+  switch (shape) {
+    case "gerund_phrase":
+      if (type === "Verb") return "Verb Ending In Ing";
+      return null;
+    case "past_tense_predicate":
+      if (type === "Verb") return "Past Tense Verb";
+      return null;
+    case "plural_countable_noun":
+      if (type === "Animal") return "Plural Animal";
+      if (
+        [
+          "Noun",
+          "Object",
+          "Food",
+          "Body Part",
+          "Place",
+          "Person",
+          "Job"
+        ].includes(type)
+      ) {
+        return "Plural Noun";
+      }
+      return null;
+    case "adjective_before_noun":
+    case "adjective_predicate":
+      if (
+        [
+          "Noun",
+          "Object",
+          "Food",
+          "Emotion"
+        ].includes(type)
+      ) {
+        return "Adjective";
+      }
+      return null;
+    case "noun_phrase":
+      if (type === "Adjective") return "Noun";
+      return null;
+    default:
+      return null;
+  }
+}
+
+function rebuildBlankWithType(blank: BlankToken, nextType: PromptTypeKey): BlankToken {
+  const definition = promptDefinition(nextType);
+  return {
+    ...blank,
+    label: definition.displayLabel,
+    displayLabel: definition.displayLabel,
+    type: definition.displayLabel,
+    surfaceForm: definition.surfaceForm,
+    partOfSpeech: definition.surfaceForm
+  };
+}
+
+function reconcileBlankTypesWithSlots(story: StoryTemplatePayload): { story: StoryTemplatePayload; slotRepairCount: number } {
+  const blanksById = new Map(story.blanks.map((blank) => [blank.id, blank]));
+  let slotRepairCount = 0;
+
+  for (const occurrence of parseTokenOccurrences(story.storyTemplate)) {
+    const blank = blanksById.get(occurrence.id);
+    if (!blank) continue;
+    const shape = inferSlotShape(occurrence.before, occurrence.after);
+    const repairedType = remapTypeForSlot(shape, blank.type as PromptTypeKey);
+    if (repairedType && repairedType !== blank.type) {
+      blanksById.set(blank.id, rebuildBlankWithType(blank, repairedType));
+      slotRepairCount += 1;
+    }
+  }
+
+  return {
+    story: {
+      ...story,
+      blanks: story.blanks.map((blank) => blanksById.get(blank.id) ?? blank)
+    },
+    slotRepairCount
+  };
+}
+
+function assessStoryCohesion(seed: string, story: StoryTemplatePayload): string[] {
+  const reasons: string[] = [];
+  const text = `${story.title} ${story.storyTemplate}`;
+  const seedSummary = summarizeSeed(seed).toLowerCase();
+  const normalizedStory = story.storyTemplate.toLowerCase();
+  const openingWindow = normalizedStory.slice(0, 220);
+
+  if (seedSummary.length > 30 && text.toLowerCase().includes(seedSummary)) {
+    reasons.push("Story repeats a long slice of the seed instead of naturally reusing its details.");
+  }
+
+  if (
+    /\beveryone kept talking about\b|\bwhat kicked this off\b|\bthe wild idea\b|\bthe original idea\b|\bthis all started because\b/.test(openingWindow)
+  ) {
+    reasons.push("Story opens with meta recap language instead of diving into the scene.");
+  }
+
+  const sentences = story.storyTemplate
+    .split(/(?<=[.!?])\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const starters = new Map<string, number>();
+  for (const sentence of sentences) {
+    const starter = sentence.toLowerCase().split(/\s+/).slice(0, 2).join(" ");
+    if (!starter) continue;
+    starters.set(starter, (starters.get(starter) ?? 0) + 1);
+  }
+  if ([...starters.values()].some((count) => count >= 3)) {
+    reasons.push("Story reuses the same sentence openings too often, making the rhythm feel flat.");
+  }
+
+  const seedKeywords = new Set(extractSeedKeywords(seed).map((keyword) => titleCase(keyword)));
+  const capitalizedMatches = text.match(/\b[A-Z][a-z]{2,}\b/g) ?? [];
+  const repeatedForeignNames = [...new Set(
+    capitalizedMatches.filter((word) => {
+      if (COMMON_CAPITALIZED_WORDS.has(word)) return false;
+      if (seedKeywords.has(word)) return false;
+      return capitalizedMatches.filter((item) => item === word).length > 1;
+    })
+  )];
+  if (repeatedForeignNames.length) {
+    reasons.push(`Story introduces recurring capitalized names not grounded in the seed: ${repeatedForeignNames.join(", ")}.`);
+  }
+
+  const streetSeed = /\bstreet\b|\broad\b|\bsidewalk\b|\bdriveway\b|\byard\b|\bneighborhood\b|\btrash can\b|\btrash cans\b/.test(seed.toLowerCase());
+  const indoorDriftWithoutMove =
+    streetSeed &&
+    /\broom\b|\bhallway\b|\bcorner\b/.test(normalizedStory) &&
+    !/\bhouse\b|\bgarage\b|\binside\b|\bindoors\b|\binto\b/.test(normalizedStory);
+  if (indoorDriftWithoutMove) {
+    reasons.push("Story drifts into an indoor-feeling setting without clearly moving there from the original outdoor seed.");
+  }
+
+  const genericScenePhrases = normalizedStory.match(/\b(the whole scene|the crowd|the situation|the adventure)\b/g) ?? [];
+  if (genericScenePhrases.length >= 3) {
+    reasons.push("Story leans on generic scene language too often instead of specific visual details.");
+  }
+
+  const resolutionSentence = sentences[sentences.length - 1]?.toLowerCase() ?? "";
+  if (!/\b(finally|at last|by the end|after that|once|soon)\b/.test(resolutionSentence)) {
+    reasons.push("Story ending feels weak or abrupt instead of landing a clear resolution beat.");
+  }
+
+  return reasons;
+}
+
+function classifyQualityReason(reason: string): "blanks" | "schema" | "cohesion" {
+  if (reason.includes("outside the allowed range") || reason.includes("word count")) return "schema";
+  if (
+    reason.includes("Token") ||
+    reason.includes("reuses token ids") ||
+    reason.includes("storyTemplate") ||
+    reason.includes("unmatched")
+  ) {
+    return "blanks";
+  }
+  return "cohesion";
 }
 
 function lintOccurrence(blank: BlankToken, before: string, after: string): string[] {
   const reasons: string[] = [];
-  const label = blank.label.trim().toLowerCase();
-  const left = normalizedSnippetEdge(before, true);
-  const right = normalizedSnippetEdge(after, false);
+  const shape = inferSlotShape(before, after);
 
-  const articleOrDeterminerBefore = [
-    /\b(a|an|the|this|that|these|those|my|your|his|her|their|our)\s*$/i
-  ];
-  const infinitiveBefore = [/\bto\s*$/i, /\bshould\s*$/i, /\bcan\s*$/i, /\bwill\s*$/i, /\bmust\s*$/i];
-  const beVerbBefore = [/\b(is|are|was|were|be|been|being|feel|seem|look)\s*$/i];
-  const prepositionBefore = [/\b(for|with|under|inside|near|around|into|onto|beside|behind)\s*$/i];
-  const nounishAfter = [/^\s*[a-z]+/i];
-
-  if (looksVerbLabel(label) && hasAnyPattern(left, articleOrDeterminerBefore)) {
-    reasons.push(`Token ${blank.id} is labeled as a verb but appears after an article/determiner.`);
-  }
-
-  if (looksAdverbLabel(label) && hasAnyPattern(left, articleOrDeterminerBefore)) {
-    reasons.push(`Token ${blank.id} is labeled as an adverb but appears after an article/determiner.`);
-  }
-
-  if (label.includes("verb ending in -ing") && hasAnyPattern(left, articleOrDeterminerBefore)) {
-    reasons.push(`Token ${blank.id} is labeled as a verb ending in -ing but appears in a noun-style slot.`);
-  }
-
-  if (looksAdjectiveLabel(label) && hasAnyPattern(left, infinitiveBefore)) {
-    reasons.push(`Token ${blank.id} is labeled as an adjective but appears where a verb is expected.`);
-  }
-
-  if (looksNounLabel(label) && hasAnyPattern(left, infinitiveBefore)) {
-    reasons.push(`Token ${blank.id} is labeled as a noun-like word but appears where a verb is expected.`);
-  }
-
-  if (looksAdjectiveLabel(label) && hasAnyPattern(left, articleOrDeterminerBefore) && !hasAnyPattern(right, nounishAfter)) {
-    reasons.push(`Token ${blank.id} is labeled as an adjective but is not followed by a noun-like word.`);
-  }
-
-  if (looksAdverbLabel(label) && hasAnyPattern(left, prepositionBefore)) {
-    reasons.push(`Token ${blank.id} is labeled as an adverb but appears after a preposition that usually takes a noun phrase.`);
-  }
-
-  if (looksNounLabel(label) && hasAnyPattern(left, beVerbBefore) && /^[\s]*[,.;!?]/.test(after)) {
-    reasons.push(`Token ${blank.id} is labeled as a noun-like word but appears where an adjective is more likely.`);
+  if (!slotAcceptsType(shape, blank.type as PromptTypeKey)) {
+    reasons.push(`Token ${blank.id} uses ${blank.type} in a ${shape.replaceAll("_", " ")} slot.`);
   }
 
   if (/^[A-Za-z]/.test(after)) {
     reasons.push(`Token ${blank.id} is glued to following letters instead of standing alone as a full word.`);
   }
 
-  if (/[A-Za-z]$/.test(left)) {
+  if (/[A-Za-z]$/.test(before)) {
     reasons.push(`Token ${blank.id} is glued to preceding letters instead of standing alone as a full word.`);
   }
 
@@ -424,6 +695,11 @@ export function assessStoryQuality(story: StoryTemplatePayload): StoryQualityRep
   const tokenIds = occurrences.map((item) => item.id);
   const uniqueTokenCount = new Set(tokenIds).size;
   const reasons: string[] = [];
+  const categories = {
+    blanks: [] as string[],
+    schema: [] as string[],
+    cohesion: [] as string[]
+  };
 
   if (wc < 130 || wc > 550) {
     reasons.push(`Story word count ${wc} is outside the allowed range.`);
@@ -439,15 +715,26 @@ export function assessStoryQuality(story: StoryTemplatePayload): StoryQualityRep
   }
 
   const blanksById = new Map(story.blanks.map((blank) => [blank.id, blank]));
+  const unreplacedTokenCount = occurrences.filter((occurrence) => !blanksById.has(occurrence.id)).length;
+  if (unreplacedTokenCount > 0) {
+    reasons.push(`Story has ${unreplacedTokenCount} unmatched tokens without blank metadata.`);
+  }
 
   for (const occurrence of occurrences) {
     const blank = blanksById.get(occurrence.id) ?? normalizeBlank({}, occurrence.id, occurrence.index);
     reasons.push(...lintOccurrence(blank, occurrence.before, occurrence.after));
   }
 
+  for (const reason of reasons) {
+    categories[classifyQualityReason(reason)].push(reason);
+  }
+
   return {
     passes: reasons.length === 0,
-    reasons
+    reasons,
+    categories,
+    grammarSlotIssueCount: reasons.filter((reason) => reason.includes("slot") || reason.includes("glued")).length,
+    unreplacedTokenCount
   };
 }
 
@@ -465,16 +752,15 @@ export function assessSeedAdherence(seed: string, story: StoryTemplatePayload): 
   const combined = `${story.title} ${story.storyTemplate}`.toLowerCase();
   const opener = `${story.title} ${story.storyTemplate.slice(0, 220)}`.toLowerCase();
   const matchedKeywords = keywords.filter((keyword) => combined.includes(keyword));
-  const minimumMatches = keywords.length >= 4 ? 2 : 1;
+  const openingMatches = keywords.filter((keyword) => opener.includes(keyword));
+  const minimumMatches = keywords.length >= 5 ? 3 : 2;
   const reasons: string[] = [];
 
   if (matchedKeywords.length < minimumMatches) {
-    reasons.push(
-      `Story only matched ${matchedKeywords.length} of ${keywords.length} seed keywords.`
-    );
+    reasons.push(`Story only matched ${matchedKeywords.length} of ${keywords.length} seed keywords.`);
   }
 
-  if (!matchedKeywords.some((keyword) => opener.includes(keyword))) {
+  if (openingMatches.length < Math.min(2, keywords.length)) {
     reasons.push("Story opening does not clearly anchor back to the seed.");
   }
 
@@ -486,34 +772,58 @@ export function assessSeedAdherence(seed: string, story: StoryTemplatePayload): 
   };
 }
 
-function qualityPasses(seed: string, story: StoryTemplatePayload): boolean {
-  return assessStoryQuality(story).passes && assessSeedAdherence(seed, story).passes;
-}
+export function validateStoryDraft(seed: string, story: StoryTemplatePayload, repairStats?: RepairStats): StoryValidationResult {
+  const quality = assessStoryQuality(story);
+  const seedReport = assessSeedAdherence(seed, story);
+  const cohesionReasons = assessStoryCohesion(seed, story);
 
-function normalizeParsedStory(parsed: Partial<StoryTemplatePayload>): StoryTemplatePayload | null {
-  if (!parsed.storyTemplate || !parsed.title) return null;
-  const deduped = dedupeStoryTemplate(parsed.storyTemplate, parsed.blanks);
-  const tokens = parseTokens(deduped.storyTemplate);
-  const normalized = normalizeBlanks(deduped.blanks, tokens);
-  const budgeted = trimBlankBudget(deduped.storyTemplate, normalized, TARGET_BLANK_COUNT);
-  const finalTokens = parseTokens(budgeted.storyTemplate);
-  const blanks = normalizeBlanks(budgeted.blanks, finalTokens);
+  if (!quality.passes || !seedReport.passes || cohesionReasons.length > 0) {
+    return {
+      decision: "retry",
+      quality: {
+        ...quality,
+        categories: {
+          ...quality.categories,
+          cohesion: [...quality.categories.cohesion, ...cohesionReasons]
+        }
+      },
+      seed: seedReport,
+      cohesionReasons
+    };
+  }
+
+  const repaired = Boolean(
+    repairStats &&
+      (repairStats.aliasCollapseCount > 0 ||
+        repairStats.trimmedBlankCount > 0 ||
+        repairStats.tokenRewriteCount > 0 ||
+        repairStats.missingBlankCount > 0)
+  );
+
   return {
-    title: parsed.title,
-    storyTemplate: budgeted.storyTemplate,
-    blanks
+    decision: repaired ? "accept_with_blank_repair" : "accept",
+    quality,
+    seed: seedReport,
+    cohesionReasons
   };
 }
 
-async function requestStoryFromModel(seed: string, retry = false): Promise<StoryTemplatePayload | null> {
+async function authorStoryFromSeed(
+  seed: string,
+  retry = false,
+  previousIssues: string[] = []
+): Promise<{ scaffold: AuthoredStoryScaffold | null; durationMs: number }> {
+  const startedAt = now();
   const client = getOpenAIClient();
-  if (!client) return null;
+  if (!client) {
+    return { scaffold: null, durationMs: now() - startedAt };
+  }
 
   const model = process.env.OPENAI_STORY_MODEL ?? "gpt-4.1-mini";
   try {
     const response = await client.responses.create({
       model,
-      input: retry ? createRetryStoryPrompt(seed) : createStoryPrompt(seed),
+      input: retry ? createRetryStoryPrompt(seed, previousIssues) : createStoryPrompt(seed),
       max_output_tokens: 2200,
       store: false,
       text: {
@@ -522,24 +832,184 @@ async function requestStoryFromModel(seed: string, retry = false): Promise<Story
     });
 
     const text = response.output_text?.trim();
-    if (!text) return null;
+    if (!text) return { scaffold: null, durationMs: now() - startedAt };
     const parsed = storyResponseSchema.parse(JSON.parse(text));
-    return normalizeParsedStory(parsed);
+    return {
+      scaffold: parsed,
+      durationMs: now() - startedAt
+    };
   } catch {
-    return null;
+    return {
+      scaffold: null,
+      durationMs: now() - startedAt
+    };
   }
 }
 
-export async function generateStory(seed: string): Promise<StoryTemplatePayload> {
-  const firstAttempt = await requestStoryFromModel(seed, false);
-  if (firstAttempt && qualityPasses(seed, firstAttempt)) return firstAttempt;
+function diagnosticsFromValidation(
+  validation: StoryValidationResult,
+  baseTimings: StoryPipelineDiagnostics["timings"],
+  retryUsed: boolean,
+  fallbackUsed: boolean,
+  attempts: StoryGenerationAttemptDiagnostic[],
+  finalOutcome: StoryPipelineDiagnostics["finalOutcome"]
+): StoryPipelineDiagnostics {
+  return {
+    fallbackUsed,
+    retryUsed,
+    unreplacedTokenCount: validation.quality.unreplacedTokenCount,
+    grammarSlotIssueCount: validation.quality.grammarSlotIssueCount,
+    finalOutcome,
+    failureCategories: {
+      seed: dedupeReasons(validation.seed.reasons),
+      blanks: dedupeReasons(validation.quality.categories.blanks),
+      schema: dedupeReasons(validation.quality.categories.schema),
+      cohesion: dedupeReasons([...validation.quality.categories.cohesion, ...validation.cohesionReasons])
+    },
+    attempts,
+    timings: baseTimings
+  };
+}
 
-  const retryAttempt = await requestStoryFromModel(seed, true);
-  if (retryAttempt && qualityPasses(seed, retryAttempt)) return retryAttempt;
+export async function generateStory(seed: string): Promise<GenerateStoryResult> {
+  const timings: StoryPipelineDiagnostics["timings"] = [];
+  const attempts: StoryGenerationAttemptDiagnostic[] = [];
+  let retryIssues: string[] = [];
+  const firstAttempt = await authorStoryFromSeed(seed, false);
+  timings.push({ stage: "story_model_initial", durationMs: firstAttempt.durationMs });
 
-  if (retryAttempt) return retryAttempt;
-  if (firstAttempt) return firstAttempt;
-  return buildFallbackStory(seed);
+  if (firstAttempt.scaffold) {
+    const normalizeStart = now();
+    const repaired = extractOrRepairBlanks(firstAttempt.scaffold);
+    timings.push({ stage: "normalize_initial", durationMs: now() - normalizeStart });
+    const validation = validateStoryDraft(seed, repaired.story, repaired.repairStats);
+    if (validation.decision !== "retry") {
+      attempts.push({
+        attempt: "initial",
+        outcome: "accepted",
+        summary:
+          validation.decision === "accept_with_blank_repair"
+            ? "Initial model output passed after local blank repair."
+            : "Initial model output passed quality checks.",
+        failureCategories: diagnosticsFromValidation(
+          validation,
+          [],
+          false,
+          false,
+          [],
+          validation.decision === "accept_with_blank_repair" ? "accepted_with_repairs" : "accepted"
+        ).failureCategories
+      });
+      return {
+        story: repaired.story,
+        diagnostics: diagnosticsFromValidation(
+          validation,
+          timings,
+          false,
+          false,
+          attempts,
+          validation.decision === "accept_with_blank_repair" ? "accepted_with_repairs" : "accepted"
+        )
+      };
+    }
+
+    attempts.push({
+      attempt: "initial",
+      outcome: "retry_requested",
+      summary: "Initial model output did not pass quality checks and triggered a retry.",
+      failureCategories: {
+        seed: dedupeReasons(validation.seed.reasons),
+        blanks: dedupeReasons(validation.quality.categories.blanks),
+        schema: dedupeReasons(validation.quality.categories.schema),
+        cohesion: dedupeReasons([...validation.quality.categories.cohesion, ...validation.cohesionReasons])
+      }
+    });
+    retryIssues = dedupeReasons([
+      ...validation.seed.reasons,
+      ...validation.quality.categories.blanks,
+      ...validation.quality.categories.schema,
+      ...validation.quality.categories.cohesion,
+      ...validation.cohesionReasons
+    ]);
+  } else {
+    attempts.push({
+      attempt: "initial",
+      outcome: "model_error",
+      summary: "Initial model output was missing or invalid."
+    });
+  }
+
+  const retryAttempt = await authorStoryFromSeed(seed, true, retryIssues);
+  timings.push({ stage: "story_model_retry", durationMs: retryAttempt.durationMs });
+
+  if (retryAttempt.scaffold) {
+    const normalizeStart = now();
+    const repaired = extractOrRepairBlanks(retryAttempt.scaffold);
+    timings.push({ stage: "normalize_retry", durationMs: now() - normalizeStart });
+    const validation = validateStoryDraft(seed, repaired.story, repaired.repairStats);
+    if (validation.decision !== "retry") {
+      attempts.push({
+        attempt: "retry",
+        outcome: "accepted",
+        summary:
+          validation.decision === "accept_with_blank_repair"
+            ? "Retry output passed after local blank repair."
+            : "Retry output passed quality checks.",
+        failureCategories: diagnosticsFromValidation(
+          validation,
+          [],
+          true,
+          false,
+          [],
+          validation.decision === "accept_with_blank_repair" ? "accepted_with_repairs" : "accepted"
+        ).failureCategories
+      });
+      return {
+        story: repaired.story,
+        diagnostics: diagnosticsFromValidation(
+          validation,
+          timings,
+          true,
+          false,
+          attempts,
+          validation.decision === "accept_with_blank_repair" ? "accepted_with_repairs" : "accepted"
+        )
+      };
+    }
+
+    attempts.push({
+      attempt: "retry",
+      outcome: "retry_requested",
+      summary: "Retry output still did not pass quality checks.",
+      failureCategories: {
+        seed: dedupeReasons(validation.seed.reasons),
+        blanks: dedupeReasons(validation.quality.categories.blanks),
+        schema: dedupeReasons(validation.quality.categories.schema),
+        cohesion: dedupeReasons([...validation.quality.categories.cohesion, ...validation.cohesionReasons])
+      }
+    });
+  } else {
+    attempts.push({
+      attempt: "retry",
+      outcome: "model_error",
+      summary: "Retry output was missing or invalid."
+    });
+  }
+
+  const fallbackStart = now();
+  const fallback = buildFallbackStory(seed);
+  timings.push({ stage: "fallback", durationMs: now() - fallbackStart });
+  const fallbackValidation = validateStoryDraft(seed, fallback);
+  attempts.push({
+    attempt: "fallback",
+    outcome: "fallback_used",
+    summary: "Fallback scaffold was used because authored model output never passed quality checks."
+  });
+
+  return {
+    story: fallback,
+    diagnostics: diagnosticsFromValidation(fallbackValidation, timings, true, true, attempts, "fallback")
+  };
 }
 
 export function fillStoryTemplate(storyTemplate: string, fills: Record<string, string>): string {

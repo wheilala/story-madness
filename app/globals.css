@@ -318,6 +318,35 @@ button[disabled] {
   line-height: 1.5;
 }
 
+.qualityBanner {
+  margin-bottom: 16px;
+}
+
+.generationDebug {
+  margin-top: 0;
+}
+
+.debugIntro,
+.debugLabel {
+  margin-top: 10px;
+}
+
+.debugAttempt + .debugAttempt {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(126, 77, 19, 0.28);
+}
+
+.qualityList {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: #7e4d13;
+}
+
+.qualityList li + li {
+  margin-top: 6px;
+}
+
 .ok {
   background: rgba(218, 248, 229, 0.92);
   border-color: rgba(84, 168, 112, 0.32);

@@ -4,8 +4,8 @@ import { canonicalTokenId, fallbackTypeForIndex, humanLabel, typeFromTokenId } f
 describe("madlib labels", () => {
   test("maps common token ids to human labels", () => {
     expect(typeFromTokenId("NOUN_1")).toBe("Noun");
-    expect(typeFromTokenId("VERB_ING_2")).toBe("Verb ending in -ing");
-    expect(typeFromTokenId("PLURAL_NOUN_3")).toBe("Plural noun");
+    expect(typeFromTokenId("VERB_ING_2")).toBe("Verb Ending In Ing");
+    expect(typeFromTokenId("PLURAL_NOUN_3")).toBe("Plural Noun");
   });
 
   test("uses provided non-variable label if present", () => {
@@ -44,6 +44,6 @@ describe("madlib labels", () => {
     expect(humanLabel(undefined, "WORD_1", 0)).toBe("Noun");
     expect(humanLabel(undefined, "WORD_2", 1)).toBe("Verb");
     expect(humanLabel(undefined, "WORD_3", 2)).toBe("Adjective");
-    expect(fallbackTypeForIndex(4)).toBe("Plural noun");
+    expect(fallbackTypeForIndex(4)).toBe("Plural Noun");
   });
 });

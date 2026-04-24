@@ -9,6 +9,7 @@ import { humanLabel } from "@/lib/madlib-labels";
 type UiStatus = { kind: "ok" | "warn" | "block"; text: string } | null;
 type StepKey = "compose" | "fills" | "reveal" | "image";
 type LoadingStage = "story" | "reveal" | null;
+const SHOW_GENERATION_TEST_MODE = true;
 
 const defaultSeed = "";
 const sampleSeeds = [
@@ -77,6 +78,25 @@ function placeholderForLabel(label: string): string {
   return `Enter ${article} ${lowered}`;
 }
 
+function summarizeGenerationIssue(story: StoryGenerateResponse): string | null {
+  if (story.generationWarning) return story.generationWarning;
+  if (story.diagnostics?.retryUsed) {
+    return "Story generation needed extra repair passes before it was ready.";
+  }
+  return null;
+}
+
+function renderFailureList(items: string[]) {
+  if (!items.length) return null;
+  return (
+    <ul className="qualityList">
+      {items.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
 export default function HomePage() {
   const [runId] = useState<string>(() => createRunId());
   const [seed, setSeed] = useState(defaultSeed);
@@ -130,6 +150,53 @@ export default function HomePage() {
       ) : (
         <React.Fragment key={`text-${idx}`}>{part.text}</React.Fragment>
       )
+    );
+  }
+
+  function renderGenerationDiagnostics() {
+    if (!SHOW_GENERATION_TEST_MODE || !story?.diagnostics) return null;
+
+    const diagnostics = story.diagnostics;
+    return (
+      <div className="status warn qualityBanner generationDebug noPrint">
+        <strong>Test mode: generation diagnostics</strong>
+        <p className="tiny debugIntro">
+          Final outcome: {diagnostics.finalOutcome ?? "unknown"}.
+          {diagnostics.fallbackUsed ? " Fallback was used." : " Fallback was not used."}
+          {diagnostics.retryUsed ? " Retry logic ran." : " Retry logic did not run."}
+        </p>
+        {diagnostics.attempts?.map((attempt) => (
+          <div key={`${attempt.attempt}-${attempt.outcome}`} className="debugAttempt">
+            <p className="tiny">
+              <strong>{attempt.attempt}</strong>: {attempt.summary}
+            </p>
+            {attempt.failureCategories?.seed?.length ? (
+              <>
+                <p className="tiny debugLabel">Seed / anchor issues</p>
+                {renderFailureList(attempt.failureCategories.seed)}
+              </>
+            ) : null}
+            {attempt.failureCategories?.blanks?.length ? (
+              <>
+                <p className="tiny debugLabel">Blank / token issues</p>
+                {renderFailureList(attempt.failureCategories.blanks)}
+              </>
+            ) : null}
+            {attempt.failureCategories?.schema?.length ? (
+              <>
+                <p className="tiny debugLabel">Schema / structure issues</p>
+                {renderFailureList(attempt.failureCategories.schema)}
+              </>
+            ) : null}
+            {attempt.failureCategories?.cohesion?.length ? (
+              <>
+                <p className="tiny debugLabel">Story quality issues</p>
+                {renderFailureList(attempt.failureCategories.cohesion)}
+              </>
+            ) : null}
+          </div>
+        ))}
+      </div>
     );
   }
 
@@ -222,6 +289,11 @@ export default function HomePage() {
           text: "Seed was adjusted for safety. You can accept the rewrite below."
         });
         setRewriteSuggestion(storyResult.rewrittenSeed ?? null);
+      } else if (storyResult.generationWarning) {
+        setSeedStatus({
+          kind: "warn",
+          text: "Story generation had issues, so the app is showing backup content instead of pretending it succeeded cleanly."
+        });
       } else {
         setSeedStatus({ kind: "ok", text: "Story generated. Fill in the words to reveal it." });
       }
@@ -448,6 +520,7 @@ export default function HomePage() {
 
   function renderFillsStep() {
     if (!story) return null;
+    const generationIssue = summarizeGenerationIssue(story);
 
     return (
       <section className="stagePage">
@@ -470,6 +543,13 @@ export default function HomePage() {
               {filledCount} of {(story.blanks ?? []).length} word prompts filled in
             </p>
           </div>
+
+          {generationIssue && (
+            <div className="status warn qualityBanner noPrint">
+              <strong>Generation note:</strong> {generationIssue}
+            </div>
+          )}
+          {renderGenerationDiagnostics()}
 
           <div className="fieldsGrid noPrint">
             {(story.blanks ?? []).map((blank: BlankToken, idx: number) => {
@@ -522,6 +602,7 @@ export default function HomePage() {
 
   function renderRevealStep() {
     if (!story || !reveal) return null;
+    const generationIssue = summarizeGenerationIssue(story);
 
     return (
       <section className="stagePage">
@@ -541,6 +622,12 @@ export default function HomePage() {
             <div className="status block">{reveal.moderationReason}</div>
           ) : (
             <>
+              {generationIssue && (
+                <div className="status warn qualityBanner noPrint">
+                  <strong>Generation note:</strong> {generationIssue}
+                </div>
+              )}
+              {renderGenerationDiagnostics()}
               <div className="storyFrame">
                 <h3>{story.title}</h3>
                 <div className="storyOut">{renderHighlightedStory()}</div>

@@ -54,7 +54,7 @@ function normalizeFillForContext(raw: string, capitalize: boolean): string {
   const cleaned = raw.trim().replace(/\s+/g, " ");
   if (!cleaned) return cleaned;
 
-  let value = cleaned.toLowerCase();
+  let value = cleaned;
 
   if (capitalize) {
     value = value.charAt(0).toUpperCase() + value.slice(1);

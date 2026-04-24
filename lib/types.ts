@@ -21,9 +21,14 @@ export type SafetyEvaluation = {
 
 export type BlankToken = {
   id: string;
+  tokenId: string;
   label: string;
+  displayLabel: string;
+  type: string;
+  surfaceForm: string;
   partOfSpeech: string;
   example: string;
+  aliasCollapsedFrom?: string;
 };
 
 export type StoryTemplatePayload = {
@@ -37,6 +42,41 @@ export type StoryGenerateResponse = StoryTemplatePayload & {
   moderationReason: string;
   rewriteApplied?: boolean;
   rewrittenSeed?: string;
+  generationWarning?: string;
+  diagnostics?: StoryPipelineDiagnostics;
+};
+
+export type StoryStageTiming = {
+  stage: string;
+  durationMs: number;
+};
+
+export type StoryGenerationAttemptDiagnostic = {
+  attempt: "initial" | "retry" | "fallback";
+  outcome: "accepted" | "retry_requested" | "model_error" | "fallback_used";
+  summary: string;
+  failureCategories?: {
+    seed: string[];
+    blanks: string[];
+    schema: string[];
+    cohesion: string[];
+  };
+};
+
+export type StoryPipelineDiagnostics = {
+  fallbackUsed: boolean;
+  retryUsed: boolean;
+  unreplacedTokenCount: number;
+  grammarSlotIssueCount: number;
+  finalOutcome?: "accepted" | "accepted_with_repairs" | "fallback";
+  failureCategories: {
+    seed: string[];
+    blanks: string[];
+    schema: string[];
+    cohesion: string[];
+  };
+  attempts?: StoryGenerationAttemptDiagnostic[];
+  timings: StoryStageTiming[];
 };
 
 export type StoryRevealResponse = {
